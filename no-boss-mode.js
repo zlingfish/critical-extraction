@@ -8,13 +8,6 @@
       return;
     }
 
-    const harborOption = document.querySelector('[data-map="harbor"]');
-    const reservoirOptions = [...document.querySelectorAll('[data-map="reservoir"]')];
-    if (reservoirOptions.some((option) => option.classList.contains('is-selected'))) {
-      harborOption?.click();
-    }
-    reservoirOptions.forEach((option) => option.remove());
-
     const administrationRouteCuts = [
       { x: 189, y: 6, z: 4, width: 0.6, height: 12, depth: 24 },
       { x: 188, y: 1.1, z: 0.2, width: 14, height: 2.2, depth: 0.18 },
@@ -95,7 +88,7 @@
 
     const originalStartRun = game.startRun;
     game.startRun = function (map, difficulty, loadout, bossMode, gameMode) {
-      const availableMap = map === 'reservoir' ? 'harbor' : map;
+      const availableMap = map;
       const noBoss = bossMode === 'none' || this.__noBossRequested;
       const args = [availableMap, difficulty, loadout, noBoss ? 'single' : bossMode, gameMode];
       const result = originalStartRun.apply(this, args);
