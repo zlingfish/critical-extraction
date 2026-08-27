@@ -12,6 +12,9 @@ export const ADRENALINE_COOLDOWN = 55;
 export const ADRENALINE_SPEED_MULTIPLIER = 1.18;
 export const ADRENALINE_TOTAL_HEALING = 20;
 export const ADRENALINE_HEALING_PER_SECOND = 2.5;
+export const RUN_DURATION = 0.34;
+export const RUN_COOLDOWN = 3;
+export const RUN_SPEED_MULTIPLIER = 3.1;
 
 export function isAbilityReady(now: number, cooldownEndsAt: number): boolean {
   return now >= cooldownEndsAt;

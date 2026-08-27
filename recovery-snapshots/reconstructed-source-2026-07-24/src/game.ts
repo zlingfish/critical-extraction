@@ -65,6 +65,9 @@ import {
   ADRENALINE_DURATION,
   ADRENALINE_SPEED_MULTIPLIER,
   ADRENALINE_TOTAL_HEALING,
+  RUN_COOLDOWN,
+  RUN_DURATION,
+  RUN_SPEED_MULTIPLIER,
   SMOKE_COOLDOWN,
   SMOKE_DURATION,
   SMOKE_RADIUS,
@@ -92,6 +95,8 @@ export interface AbilityView {
   smokeActive: number;
   adrenalineCooldown: number;
   adrenalineActive: number;
+  runCooldown: number;
+  runActive: number;
 }
 
 export interface OperationStatusView {
@@ -1089,6 +1094,10 @@ const WEAPON_CONFIGS: Record<WeaponId, WeaponConfig> = {
   },
 };
 
+// The game starts with these three built-in weapons. Optional weapon-variant
+// scripts can extend the loadout later, but the core game must boot on its own.
+const WEAPON_IDS: WeaponId[] = ['rifle', 'smg', 'shotgun'];
+
 export class CriticalExtractionGame {
   private readonly canvas: HTMLCanvasElement;
   private readonly callbacks: GameCallbacks;
@@ -1190,6 +1199,7 @@ export class CriticalExtractionGame {
   private weapon!: THREE.Group;
   private weaponReceiver!: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
   private weaponBarrel!: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
+  private weaponMagazine!: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
   private leftPlayerArm!: THREE.Group;
   private rightPlayerArm!: THREE.Group;
   private muzzleFlash!: THREE.Group;
@@ -1231,6 +1241,10 @@ export class CriticalExtractionGame {
   private sprintBlend = 0;
   private groundedBlend = 1;
   private readonly lastSafePlayerPosition = new THREE.Vector3(0, 0.9, 0);
+  // Detect the rare case where a capsule gets wedged in a wall corner or door frame.
+  private stuckPlayerSeconds = 0;
+  private lastPlayerHorizontalPosition = new THREE.Vector3();
+  private lastStuckRecoveryAt = -100;
   private currentMoveSpeed = PLAYER_WALK_SPEED;
   private landingKick = 0;
   private lastStepIndex = 0;
@@ -1248,6 +1262,10 @@ export class CriticalExtractionGame {
   private nextShotAt = 0;
   private lastShotAt = -100;
   private lastShotPosition = new THREE.Vector3();
+  private lastShotNoiseRadius = 0;
+  private lastPlayerNoiseAt = -100;
+  private lastPlayerNoisePosition = new THREE.Vector3();
+  private lastPlayerNoiseRadius = 0;
   private lastDamagedAt = -100;
   private combatGraceEndsAt = 0;
   private healingEndsAt = 0;
@@ -1256,6 +1274,8 @@ export class CriticalExtractionGame {
   private adrenalineCooldownEndsAt = 0;
   private adrenalineEndsAt = 0;
   private adrenalineHealingRemaining = 0;
+  private runCooldownEndsAt = 0;
+  private runEndsAt = 0;
   private deployEndsAt = 0;
   private updateAccumulator = 0;
   private aiAccumulator = 0;
@@ -1498,6 +1518,8 @@ export class CriticalExtractionGame {
     this.adrenalineCooldownEndsAt = 0;
     this.adrenalineEndsAt = 0;
     this.adrenalineHealingRemaining = 0;
+    this.runCooldownEndsAt = 0;
+    this.runEndsAt = 0;
     this.lookSwayX = 0;
     this.lookSwayY = 0;
     this.jumpQueuedUntil = 0;
@@ -1763,12 +1785,28 @@ export class CriticalExtractionGame {
   }
 
   discardBackpackItem(itemId: string): boolean {
+    return this.discardBackpackItems([itemId], 'discard');
+  }
+
+  discardBackpackItems(itemIds: string[], action: 'discard' | 'destroy' = 'discard'): boolean {
     if (!['deploying', 'active', 'extracting', 'paused'].includes(this.run.phase)) return false;
-    const result = discardInventoryItem(this.run.backpack, itemId);
-    if (!result.discarded) return false;
-    this.run.backpack = result.items;
+    let items = this.run.backpack;
+    const removed: InventoryItem[] = [];
+    for (const itemId of [...new Set(itemIds)]) {
+      const result = discardInventoryItem(items, itemId);
+      if (result.discarded) {
+        removed.push(result.discarded);
+        items = result.items;
+      }
+    }
+    if (removed.length === 0) return false;
+    this.run.backpack = items;
     this.callbacks.onUpdate(this.run);
-    this.callbacks.onToast(`已丢弃 ${result.discarded.name}${result.discarded.quantity > 1 ? ` × ${result.discarded.quantity}` : ''}`);
+    const verb = action === 'destroy' ? '已销毁' : '已丢弃';
+    const summary = removed.length === 1
+      ? `${verb} ${removed[0].name}${removed[0].quantity > 1 ? ` × ${removed[0].quantity}` : ''}`
+      : `${verb} ${removed.length} 件物品`;
+    this.callbacks.onToast(summary, action === 'destroy' ? 'danger' : 'info');
     return true;
   }
 
@@ -1972,7 +2010,8 @@ export class CriticalExtractionGame {
     if (event.code === 'Digit2') this.switchWeapon('smg');
     if (event.code === 'Digit3') this.switchWeapon('shotgun');
     if (event.code === 'KeyQ') this.setAiming(!this.aiming);
-    if (event.code === 'KeyR') this.startReload();
+    if (this.isActionCode(event.code, 'reload') && !event.repeat) this.startReload();
+    if (this.isActionCode(event.code, 'run') && !event.repeat) this.activateRun();
     if (event.code === 'Digit4') this.useMedkit();
     if (event.code === 'ArrowLeft') this.applyLook(-18, 0, 0.002);
     if (event.code === 'ArrowRight') this.applyLook(18, 0, 0.002);
@@ -2103,6 +2142,8 @@ export class CriticalExtractionGame {
       smokeActive: this.smokes.reduce((remaining, smoke) => Math.max(remaining, abilitySecondsRemaining(now, smoke.endsAt)), 0),
       adrenalineCooldown: abilitySecondsRemaining(now, this.adrenalineCooldownEndsAt),
       adrenalineActive: abilitySecondsRemaining(now, this.adrenalineEndsAt),
+      runCooldown: abilitySecondsRemaining(now, this.runCooldownEndsAt),
+      runActive: abilitySecondsRemaining(now, this.runEndsAt),
     };
   }
 
@@ -2183,6 +2224,20 @@ export class CriticalExtractionGame {
     this.emitAbilityView(now);
   }
 
+  private activateRun(force = false): void {
+    if (!['active', 'extracting'].includes(this.run.phase) || (!force && !this.controlsActive) || this.lootSearch) return;
+    const now = this.run.elapsedSeconds;
+    if (!isAbilityReady(now, this.runCooldownEndsAt)) {
+      this.callbacks.onToast(`快速冲刺冷却中 · ${Math.ceil(this.runCooldownEndsAt - now)} 秒`);
+      return;
+    }
+    this.runEndsAt = now + RUN_DURATION;
+    this.runCooldownEndsAt = now + RUN_COOLDOWN;
+    this.run.player.stamina = Math.max(0, this.run.player.stamina - 12);
+    this.callbacks.onToast('快速冲刺 · 短距离突进');
+    this.emitAbilityView(now);
+  }
+
   private updateAbilities(delta: number, now: number): void {
     if (now < this.adrenalineEndsAt) {
       const healed = applyAdrenalineHealing(this.run.player.health, this.adrenalineHealingRemaining, delta);
@@ -2253,6 +2308,8 @@ export class CriticalExtractionGame {
     this.adrenalineCooldownEndsAt = 0;
     this.adrenalineEndsAt = 0;
     this.adrenalineHealingRemaining = 0;
+    this.runCooldownEndsAt = 0;
+    this.runEndsAt = 0;
     this.emitAbilityView(0);
   }
 
@@ -4351,7 +4408,11 @@ export class CriticalExtractionGame {
       RAPIER.ColliderDesc.capsule(0.5, 0.35),
       this.playerBody,
     );
-    this.characterController = this.physicsWorld.createCharacterController(0.04);
+    // A slightly wider skin and normal nudge keep the capsule from resting exactly
+    // on a collider edge, which is what causes the sticky wall-corner feeling.
+    this.characterController = this.physicsWorld.createCharacterController(0.06);
+    this.characterController.setNormalNudgeFactor(1.0);
+    this.characterController.setSlideEnabled(true);
     this.characterController.enableAutostep(0.42, 0.18, true);
     this.characterController.enableSnapToGround(0.22);
     this.characterController.setApplyImpulsesToDynamicBodies(true);
@@ -4382,6 +4443,9 @@ export class CriticalExtractionGame {
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.22, 0.12), gripMaterial);
     grip.rotation.x = -0.2;
     grip.position.set(0, -0.16, -0.18);
+    this.weaponMagazine = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.25, 0.16), gripMaterial);
+    this.weaponMagazine.position.set(0, -0.17, -0.33);
+    this.weaponMagazine.rotation.x = -0.12;
     // Keep the front sight low enough that it cannot cover the centre of the view when aiming.
     this.weaponSight = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.028, 0.1), bodyMaterial);
     this.weaponSight.position.set(0, 0.075, -0.31);
@@ -4413,7 +4477,7 @@ export class CriticalExtractionGame {
     // Keep both hands tight to the weapon instead of floating at either side of it.
     this.leftPlayerArm.position.set(-0.075, -0.245, -0.42);
     this.rightPlayerArm.position.set(0.055, -0.245, -0.18);
-    this.weapon.add(this.weaponReceiver, this.weaponBarrel, grip, sight, scopeRing, scopeLens, this.leftPlayerArm, this.rightPlayerArm);
+    this.weapon.add(this.weaponReceiver, this.weaponBarrel, grip, this.weaponMagazine, this.weaponSight, scopeRing, scopeLens, this.leftPlayerArm, this.rightPlayerArm);
     this.weapon.position.set(0.27, -0.25, -0.52);
     this.camera.add(this.weapon);
     this.scene.add(this.camera);
@@ -5274,11 +5338,16 @@ export class CriticalExtractionGame {
       regularPositions.length * difficulty.enemyCount * gameModeDefinition(this.activeGameMode).enemyMultiplier,
     ));
     const enemyPositions = [...regularPositions.slice(0, regularCount), ...selectedBossPositions];
+    const enemySpawns = enemyPositions.map(([x, z, boss]) => ({ x, z, boss: Boolean(boss), reinforcement: false, trainingTarget: false, trainingDistance: 0, trainingArmorLevel: 0 }));
     let bossIndex = bossPositions.length - selectedBossPositions.length;
+    const shoulderGeometry = new THREE.BoxGeometry(0.28, 0.2, 0.34);
+    const hardArmor = new THREE.MeshStandardMaterial({ color: '#303833', roughness: 0.52, metalness: 0.46 });
     enemySpawns.forEach(({
       x, z, boss: isBoss, reinforcement, trainingTarget, trainingDistance, trainingArmorLevel,
     }, index) => {
       const group = new THREE.Group();
+      const torso = new THREE.Group();
+      const headRig = new THREE.Group();
       const boss = Boolean(isBoss);
       const faction: EnemyFaction = boss || index % 2 === 0 ? 'security' : 'raider';
       const bossProfile = boss ? BOSS_PROFILES[this.activeOperation.id][bossIndex++] : null;
@@ -5295,6 +5364,9 @@ export class CriticalExtractionGame {
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.95, 0.38), uniform);
       body.position.y = 1.1;
       body.castShadow = true;
+      const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.34, 0.4), uniform);
+      pelvis.position.set(0, 0.68, 0);
+      pelvis.castShadow = true;
       const armor = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.32), vest);
       armor.position.set(0, 1.2, 0.07);
       armor.castShadow = true;
@@ -5314,12 +5386,25 @@ export class CriticalExtractionGame {
       visor.position.set(0, 1.87, 0.225);
       const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.82, 0.2), uniform);
       const rightArm = leftArm.clone();
+      const leftElbow = new THREE.Group();
+      const rightElbow = new THREE.Group();
+      leftArm.userData.elbow = leftElbow;
+      rightArm.userData.elbow = rightElbow;
       leftArm.position.set(-0.46, 1.08, 0);
       rightArm.position.set(0.46, 1.08, 0);
       leftArm.castShadow = true;
       rightArm.castShadow = true;
       const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.78, 0.24), uniform);
       const rightLeg = leftLeg.clone();
+      const leftKnee = new THREE.Group();
+      const rightKnee = new THREE.Group();
+      const bootMaterial = new THREE.MeshStandardMaterial({ color: '#1b211d', roughness: 0.9, metalness: 0.08 });
+      const leftBoot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.38), bootMaterial);
+      const rightBoot = leftBoot.clone();
+      leftLeg.userData.knee = leftKnee;
+      rightLeg.userData.knee = rightKnee;
+      leftLeg.userData.boot = leftBoot;
+      rightLeg.userData.boot = rightBoot;
       leftLeg.position.set(-0.19, 0.34, 0);
       rightLeg.position.set(0.19, 0.34, 0);
       leftLeg.castShadow = true;
@@ -5363,7 +5448,7 @@ export class CriticalExtractionGame {
         shield.castShadow = true;
         torso.add(shield);
       }
-      group.add(body, armor, head, helmet, visor, leftArm, rightArm, leftLeg, rightLeg, weapon, alertLight, muzzleLight);
+      group.add(torso, headRig, body, armor, head, helmet, visor, leftArm, rightArm, leftLeg, rightLeg, weapon, alertLight, muzzleLight);
       group.position.set(x, 0, z);
       group.visible = !reinforcement;
       this.scene.add(group);
@@ -5499,6 +5584,13 @@ export class CriticalExtractionGame {
     const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, barrelLength), vest);
     barrel.position.set(0, 0.015, 0.62);
     barrel.castShadow = true;
+    const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.1, barrelLength * 0.58), vest);
+    handguard.position.set(0, -0.005, 0.42);
+    const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.025, receiverLength + 0.2), metal);
+    topRail.position.set(0, 0.075, 0.08);
+    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.1, 8), metal);
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.set(0, 0.015, 0.62 + barrelLength * 0.5);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.24, 0.12), vest);
     grip.position.set(0, -0.15, -0.06);
     grip.rotation.x = 0.22;
@@ -6257,6 +6349,7 @@ export class CriticalExtractionGame {
 
   private updatePlayer(delta: number, now = performance.now() / 1000): void {
     const adrenalineActive = this.run.elapsedSeconds < this.adrenalineEndsAt;
+    const runActive = this.run.elapsedSeconds < this.runEndsAt;
     const crouching = this.isActionDown('crouch');
     const sprinting = this.isActionDown('sprint') && !crouching && this.run.player.stamina > 1;
     const forwardAmount = Number(this.isActionDown('forward')) - Number(this.isActionDown('backward'));
@@ -6269,6 +6362,7 @@ export class CriticalExtractionGame {
     if (this.aiming) targetSpeed *= 0.68;
     if (this.carriedObjective) targetSpeed *= gameModeDefinition(this.activeGameMode).movementMultiplier;
     if (adrenalineActive) targetSpeed *= ADRENALINE_SPEED_MULTIPLIER;
+    if (runActive) targetSpeed *= RUN_SPEED_MULTIPLIER;
 
     const stanceBlend = 1 - Math.pow(0.00001, delta);
     this.crouchBlend = THREE.MathUtils.lerp(this.crouchBlend, crouching ? 1 : 0, stanceBlend);
@@ -6307,7 +6401,42 @@ export class CriticalExtractionGame {
       y: this.verticalVelocity * delta,
       z: movement.z,
     });
-    const corrected = this.characterController.computedMovement();
+    let corrected = this.characterController.computedMovement();
+
+    // Rapier normally slides automatically. At tight corners, however, two nearly
+    // opposing wall normals can cancel the slide. Re-project the requested movement
+    // along the contact tangents and give the capsule a tiny outward nudge.
+    const desiredHorizontal = Math.hypot(movement.x, movement.z);
+    const correctedHorizontal = Math.hypot(corrected.x, corrected.z);
+    if (moving && desiredHorizontal > 0.0001 && correctedHorizontal < desiredHorizontal * 0.12
+      && this.characterController.numComputedCollisions() > 0) {
+      const slide = new THREE.Vector3(movement.x, this.verticalVelocity * delta, movement.z);
+      const nudge = new THREE.Vector3();
+      for (let index = 0; index < this.characterController.numComputedCollisions(); index += 1) {
+        const collision = this.characterController.computedCollision(index);
+        if (!collision) continue;
+        const normal = collision.normal1;
+        const dot = slide.x * normal.x + slide.y * normal.y + slide.z * normal.z;
+        if (dot < 0) {
+          slide.x -= normal.x * dot;
+          slide.y -= normal.y * dot;
+          slide.z -= normal.z * dot;
+        }
+        nudge.add(new THREE.Vector3(normal.x, 0, normal.z));
+      }
+      if (nudge.lengthSq() > 0.0001) {
+        nudge.normalize().multiplyScalar(0.055);
+        slide.x += nudge.x;
+        slide.z += nudge.z;
+      }
+      this.characterController.computeColliderMovement(this.playerCollider, {
+        x: slide.x,
+        y: slide.y,
+        z: slide.z,
+      });
+      const slipped = this.characterController.computedMovement();
+      if (Math.hypot(slipped.x, slipped.z) > correctedHorizontal + 0.002) corrected = slipped;
+    }
     const translation = this.playerBody.translation();
     this.playerBody.setNextKinematicTranslation({
       x: translation.x + corrected.x,
@@ -6323,7 +6452,35 @@ export class CriticalExtractionGame {
       return;
     }
     const groundedAfterMove = this.characterController.computedGrounded();
-    if (groundedAfterMove && next.y > FALL_RECOVERY_Y + 1) this.lastSafePlayerPosition.set(next.x, next.y, next.z);
+    const actualHorizontalStep = Math.hypot(next.x - translation.x, next.z - translation.z);
+    if (groundedAfterMove && next.y > FALL_RECOVERY_Y + 1
+      && (!moving || actualHorizontalStep > 0.015)) {
+      this.lastSafePlayerPosition.set(next.x, next.y, next.z);
+    }
+
+    // If input is held but the capsule has not moved for a short period, it is
+    // probably wedged at a corner. Try a few nearby clear points before falling
+    // back to the last known safe position. This applies to all maps and tunnels.
+    const horizontalDelta = Math.hypot(next.x - this.lastPlayerHorizontalPosition.x, next.z - this.lastPlayerHorizontalPosition.z);
+    if (moving && groundedAfterMove && horizontalDelta < 0.006 && desiredHorizontal > 0.0001) {
+      this.stuckPlayerSeconds += delta;
+    } else {
+      this.stuckPlayerSeconds = Math.max(0, this.stuckPlayerSeconds - delta * 2.5);
+    }
+    this.lastPlayerHorizontalPosition.set(next.x, next.y, next.z);
+    if (this.stuckPlayerSeconds > 0.72 && now - this.lastStuckRecoveryAt > 1.2) {
+      const clear = this.findNearbyClearPosition(next.x, next.z);
+      const movedToClear = Math.hypot(clear.x - next.x, clear.z - next.z) > 0.12;
+      if (movedToClear) {
+        this.playerBody.setTranslation({ x: clear.x, y: next.y, z: clear.z }, true);
+        this.playerBody.setNextKinematicTranslation({ x: clear.x, y: next.y, z: clear.z });
+        this.lastSafePlayerPosition.set(clear.x, next.y, clear.z);
+      } else {
+        this.recoverPlayerFromFall();
+      }
+      this.stuckPlayerSeconds = 0;
+      this.lastStuckRecoveryAt = now;
+    }
     this.groundedBlend = THREE.MathUtils.lerp(this.groundedBlend, groundedAfterMove ? 1 : 0, 1 - Math.pow(0.0002, delta));
     if (!groundedBeforeMove && groundedAfterMove && fallSpeed < -2.6) {
       this.landingKick = THREE.MathUtils.clamp(Math.abs(fallSpeed) * 0.018, 0.06, 0.22);
@@ -8847,5 +9004,17 @@ export class CriticalExtractionGame {
       if (isClear(candidateX, candidateZ)) return { x: candidateX, z: candidateZ };
     }
     return { x, z };
+  }
+
+  private syncMissionObjectiveText(): void {
+    if (!this.run || !this.activeOperation) return;
+    if (this.activeGameMode === 'training') {
+      this.run.objectiveText = '射击训练场 · 移动、瞄准并练习射击';
+    } else if (this.run.hasObjective) {
+      this.run.objectiveText = '携带任务物品，前往标记的撤离区';
+    } else {
+      this.run.objectiveText = this.activeOperation.objectiveText;
+    }
+    this.callbacks.onUpdate(this.run);
   }
 }

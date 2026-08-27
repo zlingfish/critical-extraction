@@ -18,6 +18,7 @@ import {
   Warehouse,
   Wind,
   Wrench,
+  Zap,
   X,
   createIcons,
 } from 'lucide';
@@ -354,6 +355,9 @@ app.innerHTML = `
           <div id="adrenaline-ability" class="ability-chip" data-state="ready">
             <i data-lucide="activity" aria-hidden="true"></i><kbd id="adrenaline-key">V</kbd><strong>肾上腺素</strong><span id="adrenaline-status">就绪</span>
           </div>
+          <div id="run-ability" class="ability-chip" data-state="ready">
+            <i data-lucide="zap" aria-hidden="true"></i><kbd id="run-key">R</kbd><strong>快速冲刺</strong><span id="run-status">就绪</span>
+          </div>
         </div>
       </div>
       <div class="hud-right">
@@ -459,7 +463,7 @@ app.innerHTML = `
         <div class="bar"><span id="extraction-bar"></span></div>
       </div>
       <div id="inventory-panel" class="inventory-panel" hidden>
-        <div class="inventory-title"><strong>战术背包</strong><span id="inventory-value">估值 0</span><button id="inventory-sort" type="button">整理</button><button id="inventory-close" type="button">关闭</button></div>
+        <div class="inventory-title"><strong>战术背包</strong><span id="inventory-value">估值 0</span><span id="inventory-selection-count" class="inventory-selection-count">未选择</span><button id="inventory-discard" class="button" type="button" disabled>丢弃</button><button id="inventory-destroy" class="button button-danger" type="button" disabled>销毁</button><button id="inventory-sort" type="button">整理</button><button id="inventory-close" type="button">关闭</button></div>
         <div class="secure-container-heading"><strong>安全箱</strong><span id="secure-container-count">0 / 2</span><small>箱内物资失败后仍会保留</small></div>
         <div id="secure-container-grid" class="secure-container-grid"></div>
         <div id="inventory-grid" class="inventory-grid"></div>
@@ -570,7 +574,7 @@ app.innerHTML = `
 
 const ICONS = {
   Activity, Archive, BookOpen, Backpack, BriefcaseMedical, ChevronUp, Coins, Crosshair, Dumbbell,
-  HardHat, PackageOpen, Play, Radio, RotateCcw, Settings, Shield, Warehouse, Wind, Wrench, X,
+  HardHat, PackageOpen, Play, Radio, RotateCcw, Settings, Shield, Warehouse, Wind, Wrench, X, Zap,
 };
 createIcons({ icons: ICONS });
 
@@ -602,6 +606,7 @@ let activeExtractionTarget = 6;
 let activeCorpseLootView: LootSearchView | null = null;
 let lastMissionTaskSignature = '';
 let lastInventorySignature = '';
+const selectedInventoryItemIds = new Set<string>();
 let lastCorpseLootSignature = '';
 let draggedLootItem: { id: string; origin: 'loot' | 'backpack' } | null = null;
 let pointerLootDrag: { id: string; origin: 'loot' | 'backpack'; startX: number; startY: number; active: boolean; element: HTMLElement } | null = null;
@@ -665,7 +670,8 @@ function renderSettings(): void {
   });
   byId('smoke-key').textContent = keyLabel(gameSettings.keyBindings.smoke);
   byId('adrenaline-key').textContent = keyLabel(gameSettings.keyBindings.adrenaline);
-  byId('aim-hint').textContent = `1–6 切枪 · ${keyLabel(gameSettings.keyBindings.reload)} 换弹 · ${keyLabel(gameSettings.keyBindings.inspect)} 检视 · ${keyLabel(gameSettings.keyBindings.aim)} 瞄准 · ${keyLabel(gameSettings.keyBindings.heal)} 医疗包`;
+  byId('run-key').textContent = keyLabel(gameSettings.keyBindings.run);
+  byId('aim-hint').textContent = `1–6 切枪 · ${keyLabel(gameSettings.keyBindings.reload)} 换弹 · ${keyLabel(gameSettings.keyBindings.run)} 冲刺 · ${keyLabel(gameSettings.keyBindings.inspect)} 检视 · ${keyLabel(gameSettings.keyBindings.aim)} 瞄准 · ${keyLabel(gameSettings.keyBindings.heal)} 医疗包`;
   applyCrosshairSettings();
 }
 
@@ -986,7 +992,10 @@ function switchLogisticsTab(tab: LogisticsTab): void {
 }
 
 function renderInventory(items: InventoryItem[], secureItems: InventoryItem[], secureCapacity: number): void {
-  const signature = `${activeBackpackSlots}:${items.map((item) => `${item.id}:${item.quantity}`).join('|')}::${secureItems.map((item) => `${item.id}:${item.quantity}`).join('|')}`;
+  for (const id of [...selectedInventoryItemIds]) {
+    if (!items.some((item) => item.id === id)) selectedInventoryItemIds.delete(id);
+  }
+  const signature = `${activeBackpackSlots}:${items.map((item) => `${item.id}:${item.quantity}`).join('|')}::${secureItems.map((item) => `${item.id}:${item.quantity}`).join('|')}::${[...selectedInventoryItemIds].sort().join('|')}`;
   if (signature === lastInventorySignature) return;
   lastInventorySignature = signature;
   const grid = byId('inventory-grid');
@@ -1002,11 +1011,16 @@ function renderInventory(items: InventoryItem[], secureItems: InventoryItem[], s
       slot.dataset.rarity = item.rarity;
       slot.draggable = true;
       slot.dataset.backpackItem = item.id;
-      slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''}</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button><button class="inventory-discard" type="button" data-discard-item="${item.id}" title="丢弃后无法恢复">丢弃</button></div>`;
+      slot.dataset.selectItem = item.id;
+      slot.classList.toggle('is-selected', selectedInventoryItemIds.has(item.id));
+      slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''}</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button></div>`;
     }
     grid.append(slot);
   }
   byId('inventory-value').textContent = `估值 ${inventoryValue(items).toLocaleString('zh-CN')}`;
+  byId('inventory-selection-count').textContent = selectedInventoryItemIds.size > 0 ? `已选 ${selectedInventoryItemIds.size} 件` : '未选择';
+  byId<HTMLButtonElement>('inventory-discard').disabled = selectedInventoryItemIds.size === 0;
+  byId<HTMLButtonElement>('inventory-destroy').disabled = selectedInventoryItemIds.size === 0;
   byId('secure-container-count').textContent = `${secureItems.length} / ${secureCapacity}`;
   byId('secure-container-grid').innerHTML = Array.from({ length: secureCapacity }, (_, index) => {
     const item = secureItems[index];
@@ -1117,7 +1131,7 @@ function renderCorpseLoot(state: LootSearchView): void {
   }
 }
 
-function renderAbilityState(id: 'smoke' | 'adrenaline', active: number, cooldown: number): void {
+function renderAbilityState(id: 'smoke' | 'adrenaline' | 'run', active: number, cooldown: number): void {
   const ability = byId(`${id}-ability`);
   const status = byId(`${id}-status`);
   if (active > 0) {
@@ -1135,6 +1149,7 @@ function renderAbilityState(id: 'smoke' | 'adrenaline', active: number, cooldown
 function renderAbilities(state: AbilityView): void {
   renderAbilityState('smoke', state.smokeActive, state.smokeCooldown);
   renderAbilityState('adrenaline', state.adrenalineActive, state.adrenalineCooldown);
+  renderAbilityState('run', state.runActive, state.runCooldown);
   gameShell.classList.toggle('is-adrenaline-active', state.adrenalineActive > 0);
 }
 
@@ -2466,6 +2481,12 @@ window.addEventListener('keydown', onGlobalKeyDown, { capture: true });
 
 byId('inventory-close').addEventListener('click', () => setInventoryOpen(false));
 byId('inventory-sort').addEventListener('click', () => game.sortBackpack());
+byId('inventory-discard').addEventListener('click', () => {
+  if (game.discardBackpackItems([...selectedInventoryItemIds], 'discard')) selectedInventoryItemIds.clear();
+});
+byId('inventory-destroy').addEventListener('click', () => {
+  if (game.discardBackpackItems([...selectedInventoryItemIds], 'destroy')) selectedInventoryItemIds.clear();
+});
 byId('field-market-close').addEventListener('click', () => game.closeFieldMarket());
 fieldMarket.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-field-trade]');
@@ -2480,8 +2501,17 @@ byId('inventory-grid').addEventListener('click', (event) => {
     return;
   }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-discard-item]');
-  if (!button?.dataset.discardItem) return;
-  game.discardBackpackItem(button.dataset.discardItem);
+  if (button?.dataset.discardItem) {
+    game.discardBackpackItem(button.dataset.discardItem);
+    selectedInventoryItemIds.delete(button.dataset.discardItem);
+    return;
+  }
+  const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-select-item]');
+  const itemId = slot?.dataset.selectItem;
+  if (!itemId) return;
+  if (selectedInventoryItemIds.has(itemId)) selectedInventoryItemIds.delete(itemId);
+  else selectedInventoryItemIds.add(itemId);
+  renderInventory(latestRun.backpack, latestRun.player.secureContainer, latestRun.player.secureContainerCapacity);
 });
 
 byId('secure-container-grid').addEventListener('click', (event) => {

@@ -2434,7 +2434,9 @@ button.corpse-loot-item:hover {
   margin-bottom: 16px;
 }
 
-.inventory-title span { margin-left: auto; color: #d8e1d1; }
+.inventory-title > span { color: #d8e1d1; }
+.inventory-title > span:first-of-type { margin-left: auto; }
+.inventory-selection-count { color: #a9b7a5 !important; font-size: 11px; white-space: nowrap; }
 
 .inventory-title button,
 .inventory-discard {
@@ -2460,6 +2462,15 @@ button.corpse-loot-item:hover {
   padding: 12px;
   border: 1px solid rgba(220, 229, 207, 0.16);
   background: #1b211b;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+}
+
+.inventory-slot.is-selected {
+  border-color: #d3e468;
+  background: rgba(76, 96, 39, .62);
+  box-shadow: 0 0 0 2px rgba(211, 228, 104, .2), 0 8px 20px rgba(0, 0, 0, .22);
+  transform: translateY(-1px);
 }
 
 .inventory-slot[draggable="true"] { cursor: grab; }

@@ -7,7 +7,7 @@ export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
 export type GameAction =
   | 'forward' | 'backward' | 'left' | 'right' | 'sprint' | 'crouch' | 'jump'
   | 'interact' | 'reload' | 'aim' | 'heal' | 'inventory' | 'weapon1' | 'weapon2' | 'weapon3'
-  | 'weapon4' | 'weapon5' | 'weapon6' | 'inspect' | 'smoke' | 'adrenaline';
+  | 'weapon4' | 'weapon5' | 'weapon6' | 'inspect' | 'smoke' | 'adrenaline' | 'run';
 
 export interface GameSettings {
   version: 1;
@@ -25,9 +25,9 @@ export interface GameSettings {
 export const DEFAULT_KEY_BINDINGS: Record<GameAction, string> = {
   forward: 'KeyW', backward: 'KeyS', left: 'KeyA', right: 'KeyD',
   sprint: 'ShiftLeft', crouch: 'KeyC', jump: 'Space', interact: 'KeyE',
-  reload: 'KeyR', aim: 'KeyQ', heal: 'KeyH', inventory: 'Tab', weapon1: 'Digit1', weapon2: 'Digit2',
+  reload: 'KeyX', aim: 'KeyQ', heal: 'KeyH', inventory: 'Tab', weapon1: 'Digit1', weapon2: 'Digit2',
   weapon3: 'Digit3', weapon4: 'Digit4', weapon5: 'Digit5', weapon6: 'Digit6', inspect: 'KeyI',
-  smoke: 'KeyG', adrenaline: 'KeyV',
+  smoke: 'KeyG', adrenaline: 'KeyV', run: 'KeyR',
 };
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -69,6 +69,8 @@ export function parseSettings(raw: string | null): GameSettings {
         keyBindings[action] = savedBindings[action];
       }
     }
+    // Older saves used R for reload; reserve it for the new quick-run action.
+    if (!savedBindings.run && savedBindings.reload === 'KeyR') keyBindings.reload = 'KeyX';
     return {
       version: 1,
       mouseSensitivity: numberOr(value.mouseSensitivity, DEFAULT_SETTINGS.mouseSensitivity, 0.2, 3),
@@ -107,5 +109,5 @@ export const SETTINGS_ACTION_LABELS: Record<GameAction, string> = {
   sprint: '冲刺', crouch: '蹲伏', jump: '跳跃', interact: '互动 / 搜刮', reload: '换弹',
   aim: '瞄准', heal: '使用医疗包', inventory: '打开背包', weapon1: '武器 1', weapon2: '武器 2', weapon3: '武器 3',
   weapon4: '武器 4', weapon5: '武器 5', weapon6: '武器 6', inspect: '检视武器',
-  smoke: '投放烟幕', adrenaline: '使用肾上腺素',
+  smoke: '投放烟幕', adrenaline: '使用肾上腺素', run: '快速冲刺',
 };
