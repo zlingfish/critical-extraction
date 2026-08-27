@@ -26,6 +26,7 @@ try {
       sourcemap: false,
       chunkSizeWarningLimit: 4096,
       rollupOptions: {
+        input: resolve(workspaceRoot, 'game-shell.html'),
         output: { inlineDynamicImports: true },
       },
     },
@@ -46,6 +47,9 @@ try {
 
   const cleanShell = shell.replace(
     /\s*<!-- launcher:start -->[\s\S]*?<!-- launcher:end -->\s*/,
+    '\n',
+  ).replace(
+    /\s*<!-- build-entry:start -->[\s\S]*?<!-- build-entry:end -->\s*/,
     '\n',
   );
   const safeJavascript = javascript.replace(/<\/script/gi, '<\\/script');
