@@ -1,0 +1,25 @@
+{
+  "name": "critical-extraction",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.0",
+    "lucide": "^0.544.0",
+    "three": "^0.180.0",
+    "yuka": "^0.7.8"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "@types/yuka": "^0.7.4",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}

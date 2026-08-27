@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111411" />
+    <title>临界撤离</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- launcher:start -->
+    <main style="display:grid;min-height:100vh;place-items:center;background:#111411;color:#eef4e9;font-family:system-ui,sans-serif">
+      <div style="text-align:center">
+        <h1>正在进入《临界撤离》</h1>
+        <p>如果没有自动打开，请点击下方按钮。</p>
+        <a href="http://127.0.0.1:4173/play.html" style="display:inline-block;padding:12px 22px;color:#141a12;background:#d3e468;text-decoration:none;font-weight:700">打开游戏</a>
+      </div>
+    </main>
+    <script>
+      // 通过本地文件双击时，必须走正在运行的本机服务；否则 file:// 页面会被游戏主动拒绝。
+      if (window.location.protocol !== 'file:') {
+        window.location.replace('/play.html');
+      }
+    </script>
+    <!-- launcher:end -->
+    <script>
+      (() => {
+        const showStartupError = () => {
+          if (document.querySelector('#menu-screen, #hud:not([hidden])')) return;
+          const app = document.querySelector('#app');
+          if (!app || app.querySelector('[data-startup-error]')) return;
+          app.innerHTML = `
+            <main data-startup-error style="display:grid;min-height:100vh;place-items:center;padding:24px;background:#111411;color:#eef4e9;font-family:system-ui,sans-serif">
+              <div style="max-width:520px;text-align:center">
+                <h1 style="font-size:24px">游戏没有正常启动</h1>
+                <p style="color:#bdc9bb;line-height:1.7">网页可能仍在使用旧文件，请重新载入最新版。</p>
+                <button type="button" style="padding:12px 20px;border:0;background:#d3e468;color:#141a12;font-weight:700;cursor:pointer" onclick="location.replace(location.pathname + '?v=' + Date.now())">重新载入游戏</button>
+              </div>
+            </main>`;
+        };
+        window.addEventListener('error', () => window.setTimeout(showStartupError, 0));
+        window.addEventListener('unhandledrejection', () => window.setTimeout(showStartupError, 0));
+        window.setTimeout(showStartupError, 12000);
+      })();
+    </script>
+  </body>
+</html>
