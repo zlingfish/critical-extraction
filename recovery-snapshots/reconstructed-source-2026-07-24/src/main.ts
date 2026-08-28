@@ -1632,13 +1632,11 @@ function showRuntimeError(error: unknown): void {
   if (runtimeErrorShown) return;
   runtimeErrorShown = true;
   console.error('游戏运行已安全停止', error);
-  hud.hidden = true;
-  deploying.hidden = true;
-  pauseScreen.hidden = true;
-  inventoryPanel.hidden = true;
-  fieldMarket.hidden = true;
-  runtimeErrorScreen.hidden = false;
-  gameShell.classList.remove('is-inventory-open', 'is-controlling', 'is-aiming', 'is-looting-corpse');
+  // 最后一道保护也不再遮住可玩的场景。真正的异常写入控制提示，玩家可以
+  // 继续移动或按 Esc 回到菜单，而不是被迫重载并丢失本局。
+  runtimeErrorScreen.hidden = true;
+  gameShell.classList.remove('is-aiming');
+  showToast('画面短暂异常，已自动继续运行', 'info');
 }
 
 // 网页里的可选功能、浏览器扩展和鼠标锁定都可能抛出一次性错误。

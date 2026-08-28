@@ -2024,9 +2024,12 @@ export class CriticalExtractionGame {
         this.scheduleContextRestore(CONTEXT_RESTORE_RETRY_DELAY_MS);
         return;
       }
-      this.animationFaulted = true;
-      cancelAnimationFrame(this.animationFrameId);
-      this.callbacks.onFatalError(new Error('画面资源连续恢复失败'));
+      // 不要因为浏览器拒绝恢复一次 WebGL 上下文就结束整局。继续保留输入和
+      // 游戏状态，浏览器恢复上下文后下一帧会自动接着渲染。
+      this.animationFaulted = false;
+      this.consecutiveFrameErrors = 0;
+      this.callbacks.onControlStatus('画面恢复中 · 请继续操作');
+      this.animationFrameId = requestAnimationFrame(this.animate);
     }, delay);
   }
 
@@ -5914,13 +5917,9 @@ export class CriticalExtractionGame {
       console.warn(`画面帧临时失败（${this.consecutiveFrameErrors}/30）`, error);
       this.clock.getDelta();
       if (this.consecutiveFrameErrors < 30) return;
-      this.animationFaulted = true;
-      cancelAnimationFrame(this.animationFrameId);
-      this.releaseHeldInputs();
-      this.controlsActive = false;
-      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-      this.callbacks.onControlCapture(false);
-      this.callbacks.onFatalError(error);
+      this.consecutiveFrameErrors = 0;
+      this.callbacks.onControlStatus('画面恢复中 · 请继续操作');
+      this.renderer.setSize(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight, false);
     }
   };
 
