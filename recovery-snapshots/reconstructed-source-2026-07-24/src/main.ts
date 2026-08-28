@@ -206,9 +206,10 @@ app.innerHTML = `
           <div class="mission-stat"><span class="stat-label">威胁</span><span id="mission-threat" class="stat-value">单首领 · 高</span></div>
           <div class="mission-stat"><span class="stat-label">窗口</span><span id="mission-window" class="stat-value">20:00</span></div>
         </div>
-        <div id="deployment-loadout" class="deployment-loadout"></div>
+        <div id="deployment-loadout" class="deployment-loadout" hidden></div>
         <div class="actions">
           <button id="deploy-button" class="button button-primary" type="button"><i data-lucide="play" aria-hidden="true"></i>进入战区</button>
+          <button id="deployment-stash-button" class="button" type="button"><i data-lucide="backpack" aria-hidden="true"></i>行动仓库</button>
           <button id="stash-button" class="button" type="button"><i data-lucide="archive" aria-hidden="true"></i>交易行</button>
           <button id="requisition-button" class="button" type="button"><i data-lucide="package-open" aria-hidden="true"></i>军需处</button>
           <button id="analysis-button" class="button" type="button"><i data-lucide="radio" aria-hidden="true"></i>分析处</button>
@@ -632,6 +633,8 @@ let pointerLootDrag: { id: string; origin: 'loot' | 'backpack'; startX: number; 
 let suppressLootClick = false;
 let pendingKeyAction: GameAction | null = null;
 let settingsReturnToPause = false;
+let deploymentStashOpen = false;
+let deploymentPanelOpen = false;
 
 const menuScreen = byId<HTMLElement>('menu-screen');
 const gameShell = byId<HTMLElement>('game-shell');
@@ -971,6 +974,8 @@ function renderFacilities(): void {
 }
 
 function renderDeploymentLoadout(): void {
+  const deploymentPanel = byId<HTMLElement>('deployment-loadout');
+  deploymentPanel.hidden = !deploymentPanelOpen;
   const categories: GearCategory[] = ['helmet', 'armor', 'backpack', 'medical', 'weapon'];
   const loadout = resolveLoadout(profile);
   const selectedKeycard = KEYCARD_OFFERS.find((offer) => offer.item.id === profile.selectedKeycardId);
@@ -983,27 +988,43 @@ function renderDeploymentLoadout(): void {
     const item = equippedItem(profile, category);
     return `<span data-rarity="${item?.rarity ?? 'white'}"><i data-lucide="${item?.icon ?? 'shield'}" aria-hidden="true"></i><b>${item?.name ?? '未装备'}</b></span>`;
   }).join('');
-  const slot = (item: InventoryItem, zone: 'rig' | 'backpack' | 'secure') => `
-    <button class="deployment-item" type="button" data-deployment-action="unstage" data-deployment-zone="${zone}" data-deployment-item="${item.id}" data-rarity="${item.rarity}">
-      <i data-lucide="minus" aria-hidden="true"></i><b>${item.name}</b><small>×${item.quantity}</small>
+  const slot = (item: InventoryItem, zone: 'rig' | 'backpack' | 'secure') => {
+    const width = item.slotWidth ?? 1;
+    const height = item.slotHeight ?? 1;
+    const footprint = width * height;
+    return `<button class="deployment-item" style="--item-w:${width};--item-h:${height}" type="button" data-deployment-action="unstage" data-deployment-zone="${zone}" data-deployment-item="${item.id}" data-rarity="${item.rarity}" title="占用 ${footprint} 格（${width}×${height}）">
+      <i data-lucide="minus" aria-hidden="true"></i><b>${item.name}</b><small>×${item.quantity} · ${footprint}格</small>
     </button>`;
+  };
   const section = (title: string, zone: 'rig' | 'backpack' | 'secure', items: InventoryItem[], capacity: number, hint: string) => `
     <section class="deployment-zone" data-zone="${zone}"><header><b>${title}</b><span>${backpackUsedSlots(items)} / ${capacity}</span></header>
-      <p>${hint}</p><div class="deployment-slots">${items.length ? items.map((item) => slot(item, zone)).join('') : '<em>空</em>'}</div></section>`;
-  const deployableSource = profile.stash.filter((item) => !['weapon', 'armor', 'helmet'].includes(item.kind));
-  byId('deployment-loadout').innerHTML = `
+      <p>${hint}</p><div class="deployment-slots">${items.map((item) => slot(item, zone)).join('')}${Array.from({ length: Math.max(0, capacity - backpackUsedSlots(items)) }, (_, index) => `<span class="deployment-empty-slot">${String(index + 1).padStart(2, '0')}</span>`).join('')}</div></section>`;
+  const deployableSource = profile.stash;
+  const deploymentSource = deployableSource.map((item) => {
+    const equipment = isEquipableLoot(item);
+    return `
+      <div class="deployment-source-row" data-rarity="${item.rarity}"><span><b>${item.name}</b><small>${kindLabel(item.kind)} · ×${item.quantity}</small></span>
+        ${equipment
+          ? `<button type="button" data-deployment-action="equip" data-deployment-item="${item.id}">${item.kind === 'weapon' ? '放入武器格' : '穿戴装备'}</button>`
+          : `<button type="button" data-deployment-action="stage" data-deployment-zone="rig" data-deployment-item="${item.id}">胸挂</button>
+             <button type="button" data-deployment-action="stage" data-deployment-zone="backpack" data-deployment-item="${item.id}">背包</button>
+             <button type="button" data-deployment-action="stage" data-deployment-zone="secure" data-deployment-item="${item.id}">安全箱</button>`}
+      </div>`;
+  }).join('');
+  deploymentPanel.innerHTML = `
     <div class="deployment-equipment">${equipment}${keycardSlot}</div>
-    <div class="deployment-heading"><div><b>出战整备</b><small>从行动仓库点击装入；装备库里已穿戴的枪、护甲和背包也会随身进场。</small></div><span>配装 ${loadout.loadoutValue.toLocaleString('zh-CN')} 金币</span></div>
+    <div class="deployment-heading"><div><b>出战整备</b><small>购买物资后，在下方选择武器格、胸挂、背包或安全箱。</small></div><span>配装 ${loadout.loadoutValue.toLocaleString('zh-CN')} 金币</span><button type="button" data-deployment-action="close-panel">收起</button></div>
     <div class="deployment-zones">
       ${section('胸挂', 'rig', profile.deploymentRig, 6, '弹药、医疗和投掷物；死亡会遗失。')}
       ${section('背包', 'backpack', profile.deploymentBackpack, loadout.backpackSlots, '行动物资与战利品；死亡会遗失。')}
       ${section('安全箱', 'secure', profile.deploymentSecure, loadout.secureContainerCapacity, '死亡后唯一会回到仓库的物资。')}
     </div>
-    <div class="deployment-stash"><header><b>行动仓库</b><span>${deployableSource.length} 种可装入物资</span></header><div class="deployment-source">${deployableSource.length ? deployableSource.map((item) => `
-      <div class="deployment-source-row" data-rarity="${item.rarity}"><span><b>${item.name}</b><small>×${item.quantity}</small></span>
-        <button type="button" data-deployment-action="stage" data-deployment-zone="rig" data-deployment-item="${item.id}">胸挂</button>
-        <button type="button" data-deployment-action="stage" data-deployment-zone="backpack" data-deployment-item="${item.id}">背包</button>
-        <button type="button" data-deployment-action="stage" data-deployment-zone="secure" data-deployment-item="${item.id}">安全箱</button></div>`).join('') : '<em>仓库中没有可携带物资；可在交易行或军需处购买。</em>'}</div></div>
+    <div class="deployment-stash${deploymentStashOpen ? ' is-open' : ''}">
+      <button class="deployment-stash-toggle" type="button" data-deployment-action="toggle-stash" aria-expanded="${deploymentStashOpen}">
+        <span><b>行动仓库</b><small>点击查看已购买和撤离带回的物品</small></span><strong>${deployableSource.length} 种物资</strong>
+      </button>
+      <div class="deployment-source" ${deploymentStashOpen ? '' : 'hidden'}>${deployableSource.length ? deploymentSource : '<em>仓库为空；可先去交易行或军需处购买。</em>'}</div>
+    </div>
     <div class="deployment-risk"><b>死亡规则：安全箱外的枪、护甲、背包、胸挂和背包物资都会遗失</b><small>成功撤离则全部带回仓库。零装突袭可免费进场，但不会有默认枪械。</small></div>`;
 }
 
@@ -1930,6 +1951,24 @@ byId('deploy-button').addEventListener('click', () => {
 byId('deployment-loadout').addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-deployment-action]');
   const action = button?.dataset.deploymentAction;
+  if (action === 'close-panel') {
+    deploymentPanelOpen = false;
+    renderDeploymentLoadout();
+    return;
+  }
+  if (action === 'toggle-stash') {
+    deploymentStashOpen = !deploymentStashOpen;
+    renderDeploymentLoadout();
+    return;
+  }
+  if (action === 'equip') {
+    const item = profile.stash.find((entry) => entry.id === button?.dataset.deploymentItem);
+    if (!item || !isEquipableLoot(item)) return;
+    profile = equipLootToProfile(profile, item);
+    saveProfile();
+    showToast(item.kind === 'weapon' ? `已放入武器格 · ${item.name}` : `已穿戴 · ${item.name}`);
+    return;
+  }
   const zone = button?.dataset.deploymentZone as 'rig' | 'backpack' | 'secure' | undefined;
   const itemId = button?.dataset.deploymentItem;
   if (!button || !action || !zone || !itemId) return;
@@ -1946,6 +1985,13 @@ byId('deployment-loadout').addEventListener('click', (event) => {
   }
   saveProfile();
   showToast(action === 'stage' ? '已装入出战整备' : '已退回行动仓库');
+});
+
+byId('deployment-stash-button').addEventListener('click', () => {
+  deploymentPanelOpen = !deploymentPanelOpen;
+  if (deploymentPanelOpen) deploymentStashOpen = true;
+  renderDeploymentLoadout();
+  if (deploymentPanelOpen) byId('deployment-loadout').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
 
 byId('runtime-reload-button').addEventListener('click', () => window.location.reload());
