@@ -1437,7 +1437,7 @@ export class CriticalExtractionGame {
   startRun(
     mapId: MapId = this.activeOperation.id,
     difficulty: DifficultyId = this.activeDifficulty,
-    supplies: { armor: number; ammo: number; medkits: number; backpackSlots?: number; weapon?: WeaponId; weaponTunings?: Partial<Record<WeaponId, WeaponBuildEffects>>; armorLevel?: number; ammoLevel?: AmmoLevel; loadoutValue?: number; secureContainerCapacity?: number; continuousStage?: number; startingItems?: InventoryItem[]; armorDurabilityPercent?: number; weaponDurabilityPercent?: number } = { armor: 0, ammo: 0, medkits: 0 },
+    supplies: { armor: number; ammo: number; medkits: number; backpackSlots?: number; weapon?: WeaponId; hasWeapon?: boolean; hasArmor?: boolean; hasMedical?: boolean; weaponTunings?: Partial<Record<WeaponId, WeaponBuildEffects>>; armorLevel?: number; ammoLevel?: AmmoLevel; loadoutValue?: number; secureContainerCapacity?: number; continuousStage?: number; startingItems?: InventoryItem[]; secureItems?: InventoryItem[]; armorDurabilityPercent?: number; weaponDurabilityPercent?: number; magneticBombs?: number } = { armor: 0, ammo: 0, medkits: 0 },
     bossMode: BossMode = 'single',
     gameMode: GameModeId = 'extraction',
   ): void {
@@ -1462,7 +1462,7 @@ export class CriticalExtractionGame {
     this.audio.unlock();
     this.run = createRunState();
     this.configureOperationSystems();
-    const maximumArmor = this.activeGameMode === 'zero' ? 0 : Math.min(140, this.run.player.armor + supplies.armor);
+    const maximumArmor = this.activeGameMode === 'zero' ? 0 : Math.min(140, (supplies.hasArmor === false ? 0 : this.run.player.armor) + supplies.armor);
     const armorCondition = Math.max(0, Math.min(1, (supplies.armorDurabilityPercent ?? 100) / 100));
     this.run.player.armor = Math.round(maximumArmor * armorCondition);
     this.run.player.armorLevel = Math.max(1, Math.min(6, supplies.armorLevel ?? 1));
@@ -1472,6 +1472,9 @@ export class CriticalExtractionGame {
     this.run.player.maxWeaponDurability = 100;
     this.run.player.ammoLevel = supplies.ammoLevel ?? 1;
     this.run.player.secureContainerCapacity = Math.max(1, Math.min(4, supplies.secureContainerCapacity ?? 2));
+    this.run.player.secureContainer = (supplies.secureItems ?? [])
+      .slice(0, this.run.player.secureContainerCapacity)
+      .map((item) => ({ ...item }));
     this.run.loadoutValue = Math.max(0, supplies.loadoutValue ?? 0);
     if (this.activeGameMode === 'training') {
       this.run.player.health = 100;
@@ -1485,8 +1488,14 @@ export class CriticalExtractionGame {
     }
     this.continuousStage = Math.max(0, Math.min(2, supplies.continuousStage ?? 0));
     if (this.activeGameMode === 'continuous') this.run.routeLog.push(`连续行动第 ${this.continuousStage + 1} 阶段 · ${this.activeOperation.name}`);
-    this.run.player.medkits = this.activeGameMode === 'zero' ? 0 : this.run.player.medkits + supplies.medkits;
-    this.backpackCapacity = Math.max(12, supplies.backpackSlots ?? 12);
+    this.run.player.medkits = this.activeGameMode === 'zero' || supplies.hasMedical === false ? 0 : this.run.player.medkits + supplies.medkits;
+    // Deployment supplies can explicitly pass 0 after a player dies. The
+    // fallback keeps older callers playable until the new loadout UI ships.
+    this.magneticCharges = this.activeGameMode === 'training'
+      ? 2
+      : Math.max(0, Math.min(2, supplies.magneticBombs ?? 2));
+    this.magneticCooldownEndsAt = 0;
+    this.backpackCapacity = Math.max(6, supplies.backpackSlots ?? 6);
     this.run.backpack = (supplies.startingItems ?? [])
       .slice(0, this.backpackCapacity)
       .map((item) => ({ ...item }));
@@ -1495,10 +1504,17 @@ export class CriticalExtractionGame {
       ? '射击训练场 · 10–75 米目标 · 1–6 级护甲 · 无限弹药与耐久'
       : this.activeOperation.objectiveText;
     const requestedWeapon = supplies.weapon ?? 'rifle';
+    if (supplies.hasWeapon === false && this.activeGameMode !== 'training') this.availableWeapons.clear();
     const startingWeapon = this.availableWeapons.has(requestedWeapon)
       ? requestedWeapon
       : [...this.availableWeapons][0] ?? 'smg';
     this.resetWeaponLoadout(startingWeapon);
+    this.weapon.visible = this.activeGameMode === 'training' || supplies.hasWeapon !== false;
+    if (supplies.hasWeapon !== false && this.activeGameMode !== 'zero') {
+      const state = this.weaponStates.get(this.activeWeaponId);
+      const config = WEAPON_CONFIGS[this.activeWeaponId];
+      if (state && config) state.magazine = config.magazineSize;
+    }
     if (this.activeGameMode === 'training') {
       const trainingWeapon = this.weaponStates.get(this.activeWeaponId);
       if (trainingWeapon) {
@@ -1511,7 +1527,7 @@ export class CriticalExtractionGame {
       if (this.activeGameMode === 'zero' || !this.availableWeapons.has(weaponId)) {
         state.magazine = 0;
         state.reserve = 0;
-      } else {
+      } else if (weaponId === this.activeWeaponId) {
         state.reserve += supplies.ammo;
       }
     }
@@ -2242,6 +2258,201 @@ export class CriticalExtractionGame {
     this.emitAbilityView(now);
   }
 
+  /**
+   * Throw one compact magnetic charge. It travels only a few metres so it is a
+   * breach/room-clearing tool instead of a long range grenade. A ray between
+   * frames prevents it from tunnelling through thin walls at low frame rates.
+   */
+  private throwMagneticBomb(): void {
+    if (!['active', 'extracting'].includes(this.run.phase) || !this.controlsActive || this.lootSearch) return;
+    const now = this.run.elapsedSeconds;
+    if (this.magneticCharges <= 0) {
+      this.callbacks.onToast('磁吸炸弹已用完 · 本局最多携带两枚');
+      return;
+    }
+    if (!isAbilityReady(now, this.magneticCooldownEndsAt)) return;
+
+    const direction = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
+    const position = this.camera.position.clone()
+      .addScaledVector(direction, 0.58)
+      .addScaledVector(right, 0.16)
+      .add(new THREE.Vector3(0, -0.14, 0));
+    const mesh = this.createMagneticBombVisual();
+    mesh.position.copy(position);
+    mesh.layers.set(MAP_RENDER_LAYERS[this.activeOperation.id]);
+    this.scene.add(mesh);
+    this.magneticBombs.push({
+      mesh,
+      position,
+      velocity: direction.multiplyScalar(10).add(new THREE.Vector3(0, 0.35, 0)),
+      travelled: 0,
+      attached: false,
+      attachedTo: null,
+      localOffset: new THREE.Vector3(),
+      explodesAt: now + 6,
+      flash: mesh.userData.flash as MagneticBombRuntime['flash'],
+    });
+    this.magneticCharges -= 1;
+    this.magneticCooldownEndsAt = now + 0.28;
+    this.audio.weaponAction('switch');
+    this.callbacks.onToast(`磁吸炸弹已投掷 · 剩余 ${this.magneticCharges} 枚`);
+    this.emitAbilityView(now);
+  }
+
+  private createMagneticBombVisual(): THREE.Group {
+    const group = new THREE.Group();
+    const casing = new THREE.MeshStandardMaterial({ color: '#252b2a', roughness: 0.36, metalness: 0.82 });
+    const magnet = new THREE.MeshStandardMaterial({ color: '#be3430', roughness: 0.46, metalness: 0.58 });
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.18, 12), casing);
+    core.rotation.x = Math.PI / 2;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.073, 0.018, 6, 12), magnet);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.z = -0.1;
+    const ledMaterial = new THREE.MeshBasicMaterial({ color: '#e6ff75', transparent: true, opacity: 0.92 });
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 6), ledMaterial);
+    led.position.z = -0.115;
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 10, 8),
+      new THREE.MeshBasicMaterial({ color: '#e8ff91', transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    flash.visible = false;
+    group.add(core, ring, led, flash);
+    group.userData.flash = flash;
+    return group;
+  }
+
+  private updateMagneticBombs(delta: number, now: number): void {
+    for (let index = this.magneticBombs.length - 1; index >= 0; index -= 1) {
+      const bomb = this.magneticBombs[index];
+      if (bomb.attached) {
+        if (bomb.attachedTo) {
+          const targetPosition = bomb.attachedTo.getWorldPosition(new THREE.Vector3());
+          bomb.position.copy(targetPosition).add(bomb.localOffset);
+          bomb.mesh.position.copy(bomb.position);
+        }
+        const remaining = Math.max(0, bomb.explodesAt - now);
+        const pulse = 0.72 + Math.sin(now * 17) * 0.28;
+        bomb.mesh.scale.setScalar(pulse);
+        if (bomb.flash) {
+          bomb.flash.visible = remaining < 0.35;
+          bomb.flash.material.opacity = remaining < 0.35 ? (0.35 - remaining) * 1.8 : 0;
+        }
+        if (now >= bomb.explodesAt) this.explodeMagneticBomb(index);
+        continue;
+      }
+
+      const previous = bomb.position.clone();
+      bomb.velocity.y -= 3.8 * delta;
+      const next = previous.clone().addScaledVector(bomb.velocity, delta);
+      const segment = next.clone().sub(previous);
+      const distance = segment.length();
+      if (distance > 0.0001) {
+        const direction = segment.multiplyScalar(1 / distance);
+        this.raycaster.set(previous, direction);
+        this.raycaster.far = distance + 0.03;
+        const hit = this.raycaster.intersectObjects([...this.blockers, ...this.enemyHitMeshes], false).find((entry) => {
+          const enemy = entry.object.userData.enemy as EnemyRuntime | undefined;
+          return !enemy || enemy.alive;
+        });
+        if (hit) {
+          const enemy = hit.object.userData.enemy as EnemyRuntime | undefined;
+          this.attachMagneticBomb(bomb, hit.point, enemy?.group ?? hit.object, direction, Boolean(enemy));
+          continue;
+        }
+      }
+      bomb.position.copy(next);
+      bomb.mesh.position.copy(next);
+      bomb.mesh.rotation.x += delta * 13;
+      bomb.mesh.rotation.z += delta * 9;
+      bomb.travelled += distance;
+      // It should not sail across an entire map if thrown into open air.
+      if (bomb.travelled >= 5.15 || bomb.position.y <= 0.17) {
+        if (bomb.position.y <= 0.17) bomb.position.y = 0.17;
+        this.attachMagneticBomb(bomb, bomb.position, null, bomb.velocity);
+      }
+    }
+  }
+
+  private attachMagneticBomb(
+    bomb: MagneticBombRuntime,
+    position: THREE.Vector3,
+    target: THREE.Object3D | null,
+    incoming: THREE.Vector3,
+    attachedToEnemy = false,
+  ): void {
+    bomb.attached = true;
+    bomb.attachedTo = target;
+    bomb.position.copy(position);
+    if (target) bomb.localOffset.copy(position).sub(target.getWorldPosition(new THREE.Vector3()));
+    else bomb.localOffset.set(0, 0, 0);
+    bomb.mesh.position.copy(position);
+    const normal = incoming.lengthSq() > 0.001 ? incoming.clone().normalize().multiplyScalar(-1) : new THREE.Vector3(0, 1, 0);
+    bomb.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), normal);
+    bomb.explodesAt = this.run.elapsedSeconds + 2;
+    this.audio.surfaceImpact('metal', position);
+    this.spawnImpactParticles(position, normal, 'metal', 5, false);
+    if (attachedToEnemy) this.callbacks.onToast('磁吸炸弹已吸附目标 · 2 秒后爆炸', 'danger');
+  }
+
+  private explodeMagneticBomb(index: number): void {
+    const bomb = this.magneticBombs[index];
+    const position = bomb.position.clone();
+    const blastRadius = 5.35;
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      const target = enemy.group.position.clone().add(new THREE.Vector3(0, 1.05, 0));
+      const distance = target.distanceTo(position);
+      if (distance >= blastRadius || !this.hasBlastLineOfSight(position, target, distance)) continue;
+      const direction = target.clone().sub(position).normalize();
+      this.damageEnemy(enemy, 118 * (1 - distance / blastRadius), 'body', target, direction, this.run.player.ammoLevel);
+    }
+    const playerDistance = this.camera.position.distanceTo(position);
+    if (playerDistance < blastRadius && this.hasBlastLineOfSight(position, this.camera.position, playerDistance)) {
+      // The thrower is not immune: close self-damage makes bad throws costly,
+      // while falloff keeps a normal five-metre throw safe.
+      this.damagePlayer(82 * (1 - playerDistance / blastRadius));
+    }
+    this.audio.destructibleExplosion(position);
+    this.spawnImpactParticles(position, new THREE.Vector3(0, 1, 0), 'metal', 34, true);
+    this.createBlastFlash(position);
+    this.scene.remove(bomb.mesh);
+    this.disposeDynamicObject(bomb.mesh);
+    this.magneticBombs.splice(index, 1);
+    this.callbacks.onToast('磁吸炸弹爆炸', 'danger');
+  }
+
+  private hasBlastLineOfSight(origin: THREE.Vector3, target: THREE.Vector3, distance: number): boolean {
+    if (distance <= 0.28) return true;
+    const direction = target.clone().sub(origin).normalize();
+    this.raycaster.set(origin, direction);
+    this.raycaster.far = Math.max(0, distance - 0.22);
+    return this.raycaster.intersectObjects(this.blockers, false).length === 0;
+  }
+
+  private createBlastFlash(position: THREE.Vector3): void {
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.7, 12, 9),
+      new THREE.MeshBasicMaterial({ color: '#fff2a6', transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    flash.position.copy(position);
+    flash.layers.set(MAP_RENDER_LAYERS[this.activeOperation.id]);
+    this.scene.add(flash);
+    const startedAt = performance.now();
+    const animateFlash = (): void => {
+      const progress = (performance.now() - startedAt) / 180;
+      if (progress >= 1 || this.disposed) {
+        this.scene.remove(flash);
+        this.disposeDynamicObject(flash);
+        return;
+      }
+      flash.scale.setScalar(1 + progress * 7);
+      (flash.material as THREE.MeshBasicMaterial).opacity = (1 - progress) * 0.88;
+      requestAnimationFrame(animateFlash);
+    };
+    requestAnimationFrame(animateFlash);
+  }
+
   private useAdrenaline(force = false): void {
     if (!['active', 'extracting'].includes(this.run.phase) || (!force && !this.controlsActive) || this.lootSearch) return;
     const now = this.run.elapsedSeconds;
@@ -2281,6 +2492,7 @@ export class CriticalExtractionGame {
       this.adrenalineHealingRemaining = 0;
     }
     this.updateSmokeEffects(now);
+    this.updateMagneticBombs(delta, now);
   }
 
   private updateSmokeEffects(now: number): void {
@@ -2338,12 +2550,18 @@ export class CriticalExtractionGame {
       this.disposeDynamicObject(smoke.mesh);
     }
     this.smokes.length = 0;
+    for (const bomb of this.magneticBombs) {
+      this.scene.remove(bomb.mesh);
+      this.disposeDynamicObject(bomb.mesh);
+    }
+    this.magneticBombs.length = 0;
     this.smokeCooldownEndsAt = 0;
     this.adrenalineCooldownEndsAt = 0;
     this.adrenalineEndsAt = 0;
     this.adrenalineHealingRemaining = 0;
     this.runCooldownEndsAt = 0;
     this.runEndsAt = 0;
+    this.magneticCooldownEndsAt = 0;
     this.emitAbilityView(0);
   }
 
@@ -2372,9 +2590,9 @@ export class CriticalExtractionGame {
 
   private resetWeaponLoadout(startingWeapon: WeaponId = 'rifle'): void {
     this.weaponStates = new Map<WeaponId, WeaponState>([
-      ['rifle', { magazine: 30, reserve: 90, reloading: false, reloadEndsAt: 0 }],
-      ['smg', { magazine: 36, reserve: 108, reloading: false, reloadEndsAt: 0 }],
-      ['shotgun', { magazine: 8, reserve: 32, reloading: false, reloadEndsAt: 0 }],
+      ['rifle', { magazine: 0, reserve: 0, reloading: false, reloadEndsAt: 0 }],
+      ['smg', { magazine: 0, reserve: 0, reloading: false, reloadEndsAt: 0 }],
+      ['shotgun', { magazine: 0, reserve: 0, reloading: false, reloadEndsAt: 0 }],
     ]);
     this.activeWeaponId = WEAPON_CONFIGS[startingWeapon] ? startingWeapon : 'rifle';
     this.run.player.weapon = this.weaponStates.get(this.activeWeaponId)!;

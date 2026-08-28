@@ -25,7 +25,7 @@ export interface GameSettings {
 export const DEFAULT_KEY_BINDINGS: Record<GameAction, string> = {
   forward: 'KeyW', backward: 'KeyS', left: 'KeyA', right: 'KeyD',
   sprint: 'ShiftLeft', crouch: 'KeyC', jump: 'Space', interact: 'KeyE',
-  reload: 'KeyX', aim: 'KeyQ', heal: 'KeyH', inventory: 'Tab', weapon1: 'Digit1', weapon2: 'Digit2',
+  reload: 'KeyX', aim: 'MouseRight', heal: 'KeyH', inventory: 'Tab', weapon1: 'Digit1', weapon2: 'Digit2',
   weapon3: 'Digit3', weapon4: 'Digit4', weapon5: 'Digit5', weapon6: 'Digit6', inspect: 'KeyI',
   smoke: 'KeyG', adrenaline: 'KeyV', run: 'KeyR',
 };
@@ -96,7 +96,7 @@ export function keyLabel(code: string): string {
   const labels: Record<string, string> = {
     Space: '空格', ShiftLeft: '左 Shift', ShiftRight: '右 Shift', ControlLeft: '左 Ctrl',
     ControlRight: '右 Ctrl', AltLeft: '左 Alt', AltRight: '右 Alt', Tab: 'Tab', Escape: 'Esc',
-    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', MouseRight: '鼠标右键',
   };
   if (labels[code]) return labels[code];
   if (code.startsWith('Key')) return code.slice(3);

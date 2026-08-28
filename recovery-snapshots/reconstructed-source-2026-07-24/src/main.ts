@@ -19,6 +19,7 @@ import {
   Wind,
   Wrench,
   Zap,
+  Target,
   X,
   createIcons,
 } from 'lucide';
@@ -53,6 +54,9 @@ import {
   repairGear,
   upgradeFacility,
   withdrawSelectedKeycardForRun,
+  dispatchDeployment,
+  stageDeploymentItem,
+  unstageDeploymentItem,
 } from './domain';
 import { CriticalExtractionGame } from './game';
 import {
@@ -103,6 +107,7 @@ const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing #app');
 
 const CORE_MARKET_CATALOG: Array<{ item: InventoryItem; price: number }> = [
+  { item: { id: 'market-magnetic-bomb', name: '磁吸炸弹', kind: 'supplies', rarity: 'blue', value: 720, quantity: 1, description: '装入胸挂后可按 Q 投掷；贴附墙面、地面或敌人，两秒后爆炸。' }, price: 1080 },
   { item: { id: 'market-bandage', name: '军用止血带', kind: 'medical', rarity: 'green', value: 420, quantity: 1 }, price: 680 },
   { item: { id: 'market-stamina-injector', name: '战术体力针', kind: 'medical', rarity: 'green', value: 980, quantity: 1, description: '短时间恢复冲刺耐力，适合长距离转移。' }, price: 1480 },
   { item: { id: 'market-adrenaline-injector', name: '肾上腺素注射针', kind: 'medical', rarity: 'blue', value: 2100, quantity: 1, description: '应急注射剂，缓解伤势并提升行动状态。' }, price: 3150 },
@@ -117,6 +122,9 @@ const CORE_MARKET_CATALOG: Array<{ item: InventoryItem; price: number }> = [
   { item: { id: 'market-optics', name: '高分辨率光学组', kind: 'electronics', rarity: 'purple', value: 2600, quantity: 1 }, price: 3980 },
   { item: { id: 'market-alloy', name: '航空级合金板', kind: 'supplies', rarity: 'gold', value: 5200, quantity: 1 }, price: 7600 },
 ];
+
+// 商城展示物也要与搜刮物资采用同一估值倍率，避免同名物品出现两套价格。
+for (const offer of CORE_MARKET_CATALOG) offer.item.value *= 7;
 
 // Each page load publishes a different public batch from the full catalog.
 const marketRotationStart = Math.floor(Math.random() * LOOT_CATALOG.length);
@@ -301,7 +309,7 @@ app.innerHTML = `
           </section>
           <section id="gear-detail" class="market-detail gear-detail" hidden>
             <div class="gear-hero">
-              <div><div class="eyebrow">装备库 / 行动配置</div><h3>个人战术装备</h3><p>购买后永久保留。穿戴的装备会直接改变下一局的护甲、背包、医疗包和起始武器。</p></div>
+              <div><div class="eyebrow">装备库 / 行动配置</div><h3>个人战术装备</h3><p>购买后选择穿戴，进入战区即属于本局携行。成功撤离会带回；死亡会遗失，安全箱不能保护穿戴装备。</p></div>
               <div id="gear-summary" class="gear-summary"></div>
             </div>
             <div id="gear-categories" class="gear-categories" aria-label="装备分类"></div>
@@ -360,6 +368,9 @@ app.innerHTML = `
           <div id="smoke-ability" class="ability-chip" data-state="ready">
             <i data-lucide="wind" aria-hidden="true"></i><kbd id="smoke-key">G</kbd><strong>烟幕</strong><span id="smoke-status">就绪</span>
           </div>
+          <div id="magnetic-ability" class="ability-chip" data-state="ready">
+            <i data-lucide="target" aria-hidden="true"></i><kbd>Q</kbd><strong>磁吸炸弹</strong><span id="magnetic-status">0 / 2</span>
+          </div>
           <div id="adrenaline-ability" class="ability-chip" data-state="ready">
             <i data-lucide="activity" aria-hidden="true"></i><kbd id="adrenaline-key">V</kbd><strong>肾上腺素</strong><span id="adrenaline-status">就绪</span>
           </div>
@@ -379,7 +390,7 @@ app.innerHTML = `
           <div class="weapon-slot" data-weapon-slot="5"><kbd>5</kbd><span>AWM</span></div>
           <div class="weapon-slot" data-weapon-slot="6"><kbd>6</kbd><span>M7</span></div>
         </div>
-        <div id="aim-hint" class="aim-hint">1–6 切枪 · R 换弹 · I 检视 · Q 瞄准 · H 医疗包</div>
+        <div id="aim-hint" class="aim-hint">1–6 切枪 · X 换弹 · 鼠标右键瞄准 · Q 磁吸炸弹 · H 医疗包</div>
       </div>
       <div id="crosshair" class="crosshair"><span></span></div>
       <div id="scope-view" class="scope-view" aria-hidden="true"><span></span></div>
@@ -582,7 +593,7 @@ app.innerHTML = `
 
 const ICONS = {
   Activity, Archive, BookOpen, Backpack, BriefcaseMedical, ChevronUp, Coins, Crosshair, Dumbbell,
-  HardHat, PackageOpen, Play, Radio, RotateCcw, Settings, Shield, Warehouse, Wind, Wrench, X, Zap,
+  HardHat, PackageOpen, Play, Radio, RotateCcw, Settings, Shield, Target, Warehouse, Wind, Wrench, X, Zap,
 };
 createIcons({ icons: ICONS });
 
@@ -679,7 +690,7 @@ function renderSettings(): void {
   byId('smoke-key').textContent = keyLabel(gameSettings.keyBindings.smoke);
   byId('adrenaline-key').textContent = keyLabel(gameSettings.keyBindings.adrenaline);
   byId('run-key').textContent = keyLabel(gameSettings.keyBindings.run);
-  byId('aim-hint').textContent = `1–6 切枪 · ${keyLabel(gameSettings.keyBindings.reload)} 换弹 · ${keyLabel(gameSettings.keyBindings.run)} 冲刺 · ${keyLabel(gameSettings.keyBindings.inspect)} 检视 · ${keyLabel(gameSettings.keyBindings.aim)} 瞄准 · ${keyLabel(gameSettings.keyBindings.heal)} 医疗包`;
+  byId('aim-hint').textContent = `1–6 切枪 · ${keyLabel(gameSettings.keyBindings.reload)} 换弹 · ${keyLabel(gameSettings.keyBindings.run)} 冲刺 · ${keyLabel(gameSettings.keyBindings.inspect)} 检视 · 鼠标右键瞄准 · Q 磁吸炸弹 · ${keyLabel(gameSettings.keyBindings.heal)} 医疗包`;
   applyCrosshairSettings();
 }
 
@@ -789,10 +800,9 @@ function renderMarketDetail(): void {
 
 function renderRequisitionDetail(): void {
   const gear = resolveLoadout(profile);
-  const activeAmmoLevel = profile.nextRunAmmoLevel ?? gear.ammoLevel;
-  const ammoSource = profile.nextRunAmmoLevel === null ? '装备自带' : '军需配发';
-  byId('loadout-preview').textContent = `永久装备：护甲 +${gear.armor} · ${gear.backpackSlots} 格背包 · 医疗 +${gear.medkits} · 备弹 +${gear.ammo} ｜ 下一局：${activeAmmoLevel} 级弹药（${ammoSource}）· 护甲 +${profile.nextRunArmorBonus} · 备弹 +${profile.nextRunAmmoBonus} · 医疗 +${profile.nextRunMedkitBonus}`;
-  const hasAmmoPack = profile.nextRunAmmoLevel !== null;
+  const activeAmmoLevel = gear.ammoLevel;
+  byId('loadout-preview').textContent = `装备提供：护甲 +${gear.armor} · ${gear.backpackSlots} 格背包 · 医疗 +${gear.medkits} · 武器基础备弹 +${gear.ammo}。弹药包需要购买后装进胸挂，行动失败会遗失。`;
+  const hasAmmoPack = false;
   byId('ammo-pack-grid').innerHTML = AMMO_PACKS.map((pack) => {
     const selected = profile.nextRunAmmoLevel === pack.level;
     const unavailable = hasAmmoPack && !selected;
@@ -969,10 +979,32 @@ function renderDeploymentLoadout(): void {
   const keycardSlot = hasSelectedKeycard
     ? `<span data-rarity="${selectedKeycard.item.rarity}"><i data-lucide="radio" aria-hidden="true"></i><b>${selectedKeycard.item.name}</b></span>`
     : '';
-  byId('deployment-loadout').innerHTML = categories.map((category) => {
+  const equipment = categories.map((category) => {
     const item = equippedItem(profile, category);
     return `<span data-rarity="${item?.rarity ?? 'white'}"><i data-lucide="${item?.icon ?? 'shield'}" aria-hidden="true"></i><b>${item?.name ?? '未装备'}</b></span>`;
-  }).join('') + keycardSlot + `<div class="deployment-risk"><b>配装 ${loadout.loadoutValue.toLocaleString('zh-CN')} 金币</b><span>${loadout.armorLevel} 级护甲 · ${loadout.ammoLevel} 级穿透</span><small>行动失败将损失背包物资并磨损装备，安全箱除外</small></div>`;
+  }).join('');
+  const slot = (item: InventoryItem, zone: 'rig' | 'backpack' | 'secure') => `
+    <button class="deployment-item" type="button" data-deployment-action="unstage" data-deployment-zone="${zone}" data-deployment-item="${item.id}" data-rarity="${item.rarity}">
+      <i data-lucide="minus" aria-hidden="true"></i><b>${item.name}</b><small>×${item.quantity}</small>
+    </button>`;
+  const section = (title: string, zone: 'rig' | 'backpack' | 'secure', items: InventoryItem[], capacity: number, hint: string) => `
+    <section class="deployment-zone" data-zone="${zone}"><header><b>${title}</b><span>${backpackUsedSlots(items)} / ${capacity}</span></header>
+      <p>${hint}</p><div class="deployment-slots">${items.length ? items.map((item) => slot(item, zone)).join('') : '<em>空</em>'}</div></section>`;
+  const deployableSource = profile.stash.filter((item) => !['weapon', 'armor', 'helmet'].includes(item.kind));
+  byId('deployment-loadout').innerHTML = `
+    <div class="deployment-equipment">${equipment}${keycardSlot}</div>
+    <div class="deployment-heading"><div><b>出战整备</b><small>从行动仓库点击装入；装备库里已穿戴的枪、护甲和背包也会随身进场。</small></div><span>配装 ${loadout.loadoutValue.toLocaleString('zh-CN')} 金币</span></div>
+    <div class="deployment-zones">
+      ${section('胸挂', 'rig', profile.deploymentRig, 6, '弹药、医疗和投掷物；死亡会遗失。')}
+      ${section('背包', 'backpack', profile.deploymentBackpack, loadout.backpackSlots, '行动物资与战利品；死亡会遗失。')}
+      ${section('安全箱', 'secure', profile.deploymentSecure, loadout.secureContainerCapacity, '死亡后唯一会回到仓库的物资。')}
+    </div>
+    <div class="deployment-stash"><header><b>行动仓库</b><span>${deployableSource.length} 种可装入物资</span></header><div class="deployment-source">${deployableSource.length ? deployableSource.map((item) => `
+      <div class="deployment-source-row" data-rarity="${item.rarity}"><span><b>${item.name}</b><small>×${item.quantity}</small></span>
+        <button type="button" data-deployment-action="stage" data-deployment-zone="rig" data-deployment-item="${item.id}">胸挂</button>
+        <button type="button" data-deployment-action="stage" data-deployment-zone="backpack" data-deployment-item="${item.id}">背包</button>
+        <button type="button" data-deployment-action="stage" data-deployment-zone="secure" data-deployment-item="${item.id}">安全箱</button></div>`).join('') : '<em>仓库中没有可携带物资；可在交易行或军需处购买。</em>'}</div></div>
+    <div class="deployment-risk"><b>死亡规则：安全箱外的枪、护甲、背包、胸挂和背包物资都会遗失</b><small>成功撤离则全部带回仓库。零装突袭可免费进场，但不会有默认枪械。</small></div>`;
 }
 
 type LogisticsTab = 'market' | 'buy' | 'requisition' | 'analysis' | 'gear' | 'gunsmith' | 'facilities';
@@ -994,7 +1026,7 @@ function switchLogisticsTab(tab: LogisticsTab): void {
     : tab === 'buy' ? '使用金币采购物资，直接进入仓库'
       : tab === 'requisition' ? '使用金币购买下一局行动补给'
         : tab === 'analysis' ? '购买房卡并选择下一局携带的隐藏门权限'
-          : tab === 'gear' ? '购买并穿戴永久战术装备'
+          : tab === 'gear' ? '购买并穿戴本局战术装备；死亡会遗失'
             : tab === 'gunsmith' ? '购买配件并保存每把武器的改装方案' : '升级永久生效的基地设施';
   renderProfile();
 }
@@ -1008,25 +1040,26 @@ function renderInventory(items: InventoryItem[], secureItems: InventoryItem[], s
   lastInventorySignature = signature;
   const grid = byId('inventory-grid');
   grid.innerHTML = '';
-  for (let index = 0; index < activeBackpackSlots; index += 1) {
-    const item = items[index];
+  for (const item of items) {
     const slot = document.createElement('div');
-    if (!item) {
-      slot.className = 'inventory-slot is-empty';
-      slot.textContent = String(index + 1).padStart(2, '0');
-    } else {
-      slot.className = 'inventory-slot';
-      slot.dataset.rarity = item.rarity;
-      slot.draggable = true;
-      slot.dataset.backpackItem = item.id;
-      slot.dataset.selectItem = item.id;
-      slot.classList.toggle('is-selected', selectedInventoryItemIds.has(item.id));
-      const footprint = (item.slotWidth ?? 1) * (item.slotHeight ?? 1);
-      slot.style.gridColumn = `span ${item.slotWidth ?? 1}`;
-      slot.style.gridRow = `span ${item.slotHeight ?? 1}`;
-      slot.title = `占用 ${footprint} 格（${item.slotWidth ?? 1}×${item.slotHeight ?? 1}）`;
-      slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''} · ${footprint}格</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button></div>`;
-    }
+    slot.className = 'inventory-slot';
+    slot.dataset.rarity = item.rarity;
+    slot.draggable = true;
+    slot.dataset.backpackItem = item.id;
+    slot.dataset.selectItem = item.id;
+    slot.classList.toggle('is-selected', selectedInventoryItemIds.has(item.id));
+    const footprint = (item.slotWidth ?? 1) * (item.slotHeight ?? 1);
+    slot.style.gridColumn = `span ${item.slotWidth ?? 1}`;
+    slot.style.gridRow = `span ${item.slotHeight ?? 1}`;
+    slot.title = `占用 ${footprint} 格（${item.slotWidth ?? 1}×${item.slotHeight ?? 1}）`;
+    slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''} · ${footprint}格</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button></div>`;
+    grid.append(slot);
+  }
+  const usedSlots = backpackUsedSlots(items);
+  for (let index = usedSlots; index < activeBackpackSlots; index += 1) {
+    const slot = document.createElement('div');
+    slot.className = 'inventory-slot is-empty';
+    slot.textContent = String(index + 1).padStart(2, '0');
     grid.append(slot);
   }
   byId('inventory-value').textContent = `估值 ${inventoryValue(items).toLocaleString('zh-CN')}`;
@@ -1163,6 +1196,12 @@ function renderAbilities(state: AbilityView): void {
   renderAbilityState('smoke', state.smokeActive, state.smokeCooldown);
   renderAbilityState('adrenaline', state.adrenalineActive, state.adrenalineCooldown);
   renderAbilityState('run', state.runActive, state.runCooldown);
+  const magnetic = byId('magnetic-ability');
+  const magneticStatus = byId('magnetic-status');
+  magnetic.dataset.state = state.magneticCharges > 0 ? (state.magneticCooldown > 0 ? 'cooldown' : 'ready') : 'empty';
+  magneticStatus.textContent = state.magneticCooldown > 0
+    ? `准备 ${state.magneticCooldown.toFixed(1)}`
+    : `${state.magneticCharges} / 2`;
   gameShell.classList.toggle('is-adrenaline-active', state.adrenalineActive > 0);
 }
 
@@ -1536,7 +1575,6 @@ function showResult(run: RunState, successful: boolean): void {
     profile = settlement.profile;
     result = settlement.result;
   } else {
-    profile = persistRunDurability(profile, run);
     const settlement = settleFailure(profile, run);
     profile = settlement.profile;
     result = { grade: 'C', value: inventoryValue(settlement.retained), timeSeconds: run.elapsedSeconds, kills: run.kills };
@@ -1600,6 +1638,9 @@ function deployWithSupplies(): void {
   const modeNames = Object.fromEntries(Object.values(GAME_MODE_DEFINITIONS).map((mode) => [mode.id, mode.name])) as Record<GameModeId, string>;
   byId('deploying-region').textContent = `K-17 / ${mapNames[selectedMap]} / ${modeNames[selectedGameMode]}`;
   const loadout = resolveLoadout(profile);
+  const hasWeapon = Boolean(profile.equippedGear.weapon);
+  const hasArmor = Boolean(profile.equippedGear.armor || profile.equippedGear.helmet);
+  const hasMedical = Boolean(profile.equippedGear.medical);
   const armorDurabilityPercent = Math.min(
     ...(['helmet', 'armor'] as const).map((category) => {
       const gearId = profile.equippedGear[category];
@@ -1614,32 +1655,51 @@ function deployWithSupplies(): void {
     ? withdrawSelectedKeycardForRun(profile, selectedOffer.item.id)
     : { profile, item: null };
   profile = preparedKeycard.profile;
+  const rigItems = profile.deploymentRig.map((item) => ({ ...item }));
+  const backpackItems = profile.deploymentBackpack.map((item) => ({ ...item }));
+  const secureItems = profile.deploymentSecure.map((item) => ({ ...item }));
+  const allStartingItems = [...rigItems, ...backpackItems, ...(preparedKeycard.item ? [preparedKeycard.item] : [])];
+  const ammoItems = rigItems.filter((item) => item.variant?.startsWith('ammo:'));
+  const ammoData = ammoItems.reduce<{ rounds: number; level: number }>((total, item) => {
+    const [, levelText, roundsText] = item.variant!.split(':');
+    return { rounds: total.rounds + Math.max(0, Number(roundsText) || 0), level: Math.max(total.level, Number(levelText) || 0) };
+  }, { rounds: 0, level: 0 });
+  const magneticBombs = rigItems.filter((item) => item.id === 'market-magnetic-bomb')
+    .reduce((total, item) => total + item.quantity, 0);
   const supplies = {
     armor: profile.nextRunArmorBonus + loadout.armor,
-    ammo: profile.nextRunAmmoBonus + loadout.ammo,
+    ammo: profile.nextRunAmmoBonus + loadout.ammo + ammoData.rounds,
     medkits: profile.nextRunMedkitBonus + loadout.medkits,
     backpackSlots: loadout.backpackSlots,
     weapon: loadout.weapon,
     weaponTunings: resolveAllWeaponBuilds(profile),
     armorLevel: loadout.armorLevel,
-    ammoLevel: profile.nextRunAmmoLevel ?? loadout.ammoLevel,
+    ammoLevel: (profile.nextRunAmmoLevel ?? (ammoData.rounds > 0 ? ammoData.level : loadout.ammoLevel)) as 0 | 1 | 2 | 3 | 4 | 5 | 6,
     loadoutValue: loadout.loadoutValue,
     secureContainerCapacity: loadout.secureContainerCapacity,
     continuousStage: selectedGameMode === 'continuous' ? profile.operationChainStage : 0,
-    startingItems: preparedKeycard.item ? [preparedKeycard.item] : [],
+    startingItems: allStartingItems,
+    secureItems,
+    magneticBombs: Math.min(2, magneticBombs),
+    hasArmor,
+    hasMedical,
     armorDurabilityPercent,
     weaponDurabilityPercent,
   };
   activeBackpackSlots = loadout.backpackSlots;
-  profile = {
+  profile = dispatchDeployment({
     ...profile,
     nextRunArmorBonus: 0,
     nextRunAmmoBonus: 0,
     nextRunAmmoLevel: null,
     nextRunMedkitBonus: 0,
-  };
+  });
   saveProfile();
-  game.startRun(selectedMap, selectedDifficulty, supplies, selectedBossMode, selectedGameMode);
+  game.startRun(selectedMap, selectedDifficulty, {
+    ...supplies,
+    weapon: hasWeapon ? supplies.weapon : 'smg',
+    hasWeapon,
+  }, selectedBossMode, selectedGameMode);
 }
 
 const game = new CriticalExtractionGame(byId<HTMLCanvasElement>('scene'), {
@@ -1865,6 +1925,27 @@ byId('deploy-button').addEventListener('click', () => {
   inventoryPanel.hidden = true;
   gameShell!.classList.remove('is-inventory-open');
   deployWithSupplies();
+});
+
+byId('deployment-loadout').addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-deployment-action]');
+  const action = button?.dataset.deploymentAction;
+  const zone = button?.dataset.deploymentZone as 'rig' | 'backpack' | 'secure' | undefined;
+  const itemId = button?.dataset.deploymentItem;
+  if (!button || !action || !zone || !itemId) return;
+  const capacity = zone === 'rig' ? 6 : zone === 'secure'
+    ? resolveLoadout(profile).secureContainerCapacity
+    : resolveLoadout(profile).backpackSlots;
+  const previous = profile;
+  profile = action === 'stage'
+    ? stageDeploymentItem(profile, itemId, zone, capacity)
+    : unstageDeploymentItem(profile, itemId, zone);
+  if (profile === previous) {
+    showToast(action === 'stage' ? '这个分区已经放不下了' : '未找到要取回的物资', 'danger');
+    return;
+  }
+  saveProfile();
+  showToast(action === 'stage' ? '已装入出战整备' : '已退回行动仓库');
 });
 
 byId('runtime-reload-button').addEventListener('click', () => window.location.reload());
@@ -2149,12 +2230,12 @@ byId('ammo-pack-grid').addEventListener('click', (event) => {
   const previousProfile = profile;
   profile = buyAmmoPack(profile, level as 0 | 1 | 2 | 3 | 4 | 5 | 6);
   if (profile === previousProfile) {
-    showToast(profile.nextRunAmmoLevel !== null ? '下一局已经装载了一种弹药' : '金币不足', 'danger');
+    showToast('金币不足', 'danger');
     return;
   }
   const pack = AMMO_PACKS.find((entry) => entry.level === level)!;
   saveProfile();
-  byId('requisition-feedback').textContent = `${pack.level} 级 ${pack.name}已装载，将在下一次部署时使用。`;
+  byId('requisition-feedback').textContent = `${pack.level} 级 ${pack.name}已存入行动仓库；请在出战整备中装进胸挂。`;
   showToast(`已购买 ${pack.level} 级 ${pack.name} · ${pack.rounds} 发`);
 });
 byId('gear-detail').addEventListener('click', (event) => {
@@ -2214,7 +2295,7 @@ byId('gear-detail').addEventListener('click', (event) => {
       showToast('金币不足或装备已经拥有', 'danger');
       return;
     }
-    byId('gear-feedback').textContent = `购买成功：${item.name} 已永久加入装备库`;
+    byId('gear-feedback').textContent = `购买成功：${item.name} 已加入行动装备库`;
     showToast(`已购买 ${item.name}`);
   } else {
     profile = equipGear(profile, item.id, item.category);

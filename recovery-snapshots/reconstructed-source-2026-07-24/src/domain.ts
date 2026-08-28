@@ -31,7 +31,7 @@ export function backpackUsedSlots(items: readonly InventoryItem[]): number {
 export function createDefaultProfile(): PersistentProfile {
   return {
     version: 1,
-    credits: 1200,
+    credits: 3400,
     requisitionTokens: 0,
     nextRunArmorBonus: 0,
     nextRunAmmoBonus: 0,
@@ -39,14 +39,11 @@ export function createDefaultProfile(): PersistentProfile {
     nextRunMedkitBonus: 0,
     selectedKeycardId: null,
     stash: [],
-    ownedGear: ['starter-helmet', 'starter-armor', 'starter-pack', 'starter-medical', 'weapon-rifle'],
-    equippedGear: {
-      helmet: 'starter-helmet',
-      armor: 'starter-armor',
-      backpack: 'starter-pack',
-      medical: 'starter-medical',
-      weapon: 'weapon-rifle',
-    },
+    deploymentRig: [],
+    deploymentBackpack: [],
+    deploymentSecure: [],
+    ownedGear: [],
+    equippedGear: {},
     facilityLevels: {
       workshop: 1,
       command: 1,
@@ -309,14 +306,22 @@ export function settleFailure(
   const retained = run.player.secureContainer.map(revealUnknownItem);
   let stash = [...profile.stash];
   for (const item of retained) stash = addInventoryItem(stash, item, Number.POSITIVE_INFINITY).items;
+  const lostGear = new Set(Object.values(profile.equippedGear).filter((id): id is string => Boolean(id)));
   return {
     retained,
     profile: {
       ...profile,
       stash,
       collectionItemIds: [...new Set([...profile.collectionItemIds, ...retained.map((item) => item.id)])],
-      insurancePolicies: profile.insurancePolicies.map((policy) => policy.status === 'covered'
-        ? { ...policy, status: 'active' as const, returnAt: Date.now() + 60_000 }
+      // 本局真正穿在身上的装备会随死亡遗失；安全箱只保护其中放入的物资。
+      // 投保不会绕过这个规则，避免出现“明明死亡却免费返还”的误导体验。
+      ownedGear: profile.ownedGear.filter((id) => !lostGear.has(id)),
+      equippedGear: Object.fromEntries(Object.entries(profile.equippedGear)
+        .filter(([, id]) => !lostGear.has(id))) as PersistentProfile['equippedGear'],
+      gearDurability: Object.fromEntries(Object.entries(profile.gearDurability)
+        .filter(([id]) => !lostGear.has(id))),
+      insurancePolicies: profile.insurancePolicies.map((policy) => lostGear.has(policy.itemId)
+        ? { ...policy, status: 'lost' as const }
         : policy),
       totalKills: profile.totalKills + run.kills,
       totalRuns: profile.totalRuns + 1,
@@ -502,13 +507,52 @@ export const AMMO_PACKS: readonly AmmoPackDefinition[] = [
 
 export function buyAmmoPack(profile: PersistentProfile, level: AmmoLevel): PersistentProfile {
   const pack = AMMO_PACKS.find((entry) => entry.level === level);
-  if (!pack || profile.nextRunAmmoLevel !== null || profile.credits < pack.cost) return profile;
+  if (!pack || profile.credits < pack.cost) return profile;
+  const item: InventoryItem = {
+    id: `ammo-pack-${pack.level}`,
+    name: `${pack.level} 级${pack.name}弹药包`,
+    kind: 'supplies',
+    rarity: (['white', 'white', 'green', 'blue', 'purple', 'gold', 'red'] as const)[pack.level],
+    value: Math.round(pack.cost * 0.65),
+    quantity: 1,
+    description: `${pack.rounds} 发；请在出战整备中装入胸挂。`,
+    variant: `ammo:${pack.level}:${pack.rounds}`,
+  };
   return {
     ...profile,
     credits: profile.credits - pack.cost,
-    nextRunAmmoLevel: pack.level,
-    nextRunAmmoBonus: Math.min(180, profile.nextRunAmmoBonus + pack.rounds),
+    stash: addInventoryItem(profile.stash, item, Number.POSITIVE_INFINITY).items,
   };
+}
+
+export type DeploymentZone = 'rig' | 'backpack' | 'secure';
+
+function deploymentField(zone: DeploymentZone): 'deploymentRig' | 'deploymentBackpack' | 'deploymentSecure' {
+  return zone === 'rig' ? 'deploymentRig' : zone === 'backpack' ? 'deploymentBackpack' : 'deploymentSecure';
+}
+
+/** 从仓库取出一件放入出战栏。出战栏里的物资会在部署时被真正带走。 */
+export function stageDeploymentItem(
+  profile: PersistentProfile,
+  itemId: string,
+  zone: DeploymentZone,
+  capacity: number,
+): PersistentProfile {
+  const field = deploymentField(zone);
+  const moved = transferInventoryItem(profile.stash, profile[field], itemId, capacity);
+  return moved.transferred ? { ...profile, stash: moved.source, [field]: moved.destination } : profile;
+}
+
+/** 将整备栏物资退回仓库，不会丢失。 */
+export function unstageDeploymentItem(profile: PersistentProfile, itemId: string, zone: DeploymentZone): PersistentProfile {
+  const field = deploymentField(zone);
+  const moved = transferInventoryItem(profile[field], profile.stash, itemId, Number.POSITIVE_INFINITY);
+  return moved.transferred ? { ...profile, [field]: moved.source, stash: moved.destination } : profile;
+}
+
+/** 进入战区时清空等待栏；实际物品已复制进局内状态。 */
+export function dispatchDeployment(profile: PersistentProfile): PersistentProfile {
+  return { ...profile, deploymentRig: [], deploymentBackpack: [], deploymentSecure: [] };
 }
 
 export function buySupply(profile: PersistentProfile, supplyId: SupplyId): PersistentProfile {
@@ -683,6 +727,9 @@ export function parseProfile(raw: string | null): PersistentProfile {
         requisitionTokens: 0,
         nextRunAmmoLevel,
         selectedKeycardId,
+        deploymentRig: Array.isArray(restored.deploymentRig) ? restored.deploymentRig : [],
+        deploymentBackpack: Array.isArray(restored.deploymentBackpack) ? restored.deploymentBackpack : [],
+        deploymentSecure: Array.isArray(restored.deploymentSecure) ? restored.deploymentSecure : [],
         ownedGear: Array.isArray(restored.ownedGear) ? restored.ownedGear : defaults.ownedGear,
         equippedGear: {
           ...defaults.equippedGear,

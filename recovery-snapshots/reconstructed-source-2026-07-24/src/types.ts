@@ -151,6 +151,10 @@ export interface PersistentProfile {
   nextRunMedkitBonus: number;
   selectedKeycardId: string | null;
   stash: InventoryItem[];
+  /** 已从仓库取出、等待带入下一局的物品。它们不再算作仓库库存。 */
+  deploymentRig: InventoryItem[];
+  deploymentBackpack: InventoryItem[];
+  deploymentSecure: InventoryItem[];
   ownedGear: string[];
   equippedGear: Partial<Record<GearCategory, string>>;
   facilityLevels: Record<FacilityId, number>;
