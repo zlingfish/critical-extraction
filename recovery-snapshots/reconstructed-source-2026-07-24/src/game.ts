@@ -1327,6 +1327,7 @@ export class CriticalExtractionGame {
   private disposed = false;
   private animationFrameId = 0;
   private animationFaulted = false;
+  private consecutiveFrameErrors = 0;
   private backgroundContextReleaseTimer = 0;
   private contextRestoreTimer = 0;
   private contextRestoreAttempts = 0;
@@ -5898,14 +5899,21 @@ export class CriticalExtractionGame {
     this.animationFrameId = requestAnimationFrame(this.animate);
     try {
       this.renderFrame(frameTime);
+      this.consecutiveFrameErrors = 0;
     } catch (error) {
       // 切换标签页时浏览器可能短暂返回无效画面，恢复前继续保留渲染循环。
       if (document.hidden || this.webGlSuspendedInBackground) {
         this.animationFaulted = false;
+        this.consecutiveFrameErrors = 0;
         this.clock.getDelta();
-        this.animationFrameId = requestAnimationFrame(this.animate);
         return;
       }
+      // Safari 在鼠标锁定、切换标签页或缩放页面时，偶尔会让单帧渲染抛错。
+      // 单次错误不代表游戏崩溃，继续下一帧；只有连续失败才真正停止。
+      this.consecutiveFrameErrors += 1;
+      console.warn(`画面帧临时失败（${this.consecutiveFrameErrors}/30）`, error);
+      this.clock.getDelta();
+      if (this.consecutiveFrameErrors < 30) return;
       this.animationFaulted = true;
       cancelAnimationFrame(this.animationFrameId);
       this.releaseHeldInputs();

@@ -1641,11 +1641,14 @@ function showRuntimeError(error: unknown): void {
   gameShell.classList.remove('is-inventory-open', 'is-controlling', 'is-aiming', 'is-looting-corpse');
 }
 
+// 网页里的可选功能、浏览器扩展和鼠标锁定都可能抛出一次性错误。
+// 它们不等于 3D 游戏已经崩溃；真正无法恢复的画面错误由游戏层上报。
 window.addEventListener('error', (event) => {
-  if (event.error) showRuntimeError(event.error);
+  console.warn('已忽略非致命网页错误', event.error ?? event.message);
 });
 window.addEventListener('unhandledrejection', (event) => {
-  showRuntimeError(event.reason);
+  event.preventDefault();
+  console.warn('已忽略非致命异步错误', event.reason);
 });
 
 function deployWithSupplies(): void {
