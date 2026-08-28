@@ -5926,8 +5926,10 @@ export class CriticalExtractionGame {
   private renderFrame(frameTime: number): void {
     // Releasing pointer lock for the loot screen can make embedded browsers report
     // that the document lost focus. Keep the reveal timer alive while the panel is open.
-    const pageIsActive = document.visibilityState === 'visible'
-      && (document.hasFocus() || document.pointerLockElement === this.canvas || this.lootSearch !== null || this.debugPreviewActive);
+    // Safari、Cloudflare 临时转发和部分内置浏览器在鼠标锁定后会错误地把
+    // document.hasFocus() 报成 false。页面仍然可见时，键盘和物理必须继续更新，
+    // 否则会出现“画面在动但 WASD 完全没反应”。真正切到后台时再暂停。
+    const pageIsActive = document.visibilityState === 'visible';
     if (!pageIsActive) {
       this.clock.getDelta();
       return;
