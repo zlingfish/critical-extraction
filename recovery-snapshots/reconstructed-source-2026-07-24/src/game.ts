@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import * as YUKA from 'yuka';
-import { addInventoryItem, completeReload, consumeKeyUse, createRunState, discardInventoryItem, nextLootRevealCount, reorderInventoryItems, sortInventoryItems, transferInventoryItem } from './domain';
+import { addInventoryItem, backpackUsedSlots, completeReload, consumeKeyUse, createRunState, discardInventoryItem, nextLootRevealCount, reorderInventoryItems, sortInventoryItems, transferInventoryItem } from './domain';
 import { lootPoolForContainer, LOOT_POOLS } from './loot';
 import type { AmmoLevel, BodyPart, EnemyState, InventoryItem, MedicalTreatment, RunState, WeaponBuildEffects, WeaponState } from './types';
 import { aimSwayMultiplier, applyBodyInjury, moveItemFromSecureContainer, moveItemToSecureContainer, movementMultiplier, resolveBallisticHit, wearDurability } from './survival-systems';
@@ -97,6 +97,9 @@ export interface AbilityView {
   adrenalineActive: number;
   runCooldown: number;
   runActive: number;
+  /** 磁吸炸弹是局内消耗品；UI 没升级时会安全忽略这两个字段。 */
+  magneticCharges: number;
+  magneticCooldown: number;
 }
 
 export interface OperationStatusView {
@@ -314,6 +317,20 @@ interface SmokeRuntime {
   startedAt: number;
   endsAt: number;
   radius: number;
+}
+
+/** A short-lived thrown device. It is intentionally raycast-driven rather than
+ * a physics body: this keeps it reliable on thin door frames and moving AI. */
+interface MagneticBombRuntime {
+  mesh: THREE.Group;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  travelled: number;
+  attached: boolean;
+  attachedTo: THREE.Object3D | null;
+  localOffset: THREE.Vector3;
+  explodesAt: number;
+  flash: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null;
 }
 
 interface ShellRuntime {
@@ -943,56 +960,59 @@ const BOSS_PROFILES: Record<MapId, readonly [BossProfile, BossProfile]> = {
   harbor: [
     {
       name: '港区监工「铁锚」',
-      reward: { id: 'iron-anchor-pass', name: '铁锚通行证', kind: 'intel', rarity: 'red', value: 16000, quantity: 1, description: '港区封锁线的最高权限凭证。' },
+      reward: { id: 'iron-anchor-pass', name: '铁锚通行证', kind: 'intel', rarity: 'red', value: 16000 * 7, quantity: 1, description: '港区封锁线的最高权限凭证。' },
     },
     {
       name: '走私头目「灰鲨」',
-      reward: { id: 'grey-shark-ledger', name: '灰鲨密账', kind: 'intel', rarity: 'red', value: 18000, quantity: 1, description: '记录港区秘密货运路线的加密账本。' },
+      reward: { id: 'grey-shark-ledger', name: '灰鲨密账', kind: 'intel', rarity: 'red', value: 18000 * 7, quantity: 1, description: '记录港区秘密货运路线的加密账本。' },
     },
   ],
   radar: [
     {
       name: '雷达指挥官「天线」',
-      reward: { id: 'antenna-command-key', name: '阵列指挥密钥', kind: 'electronics', rarity: 'red', value: 17000, quantity: 1, description: '可接管雷达阵列的指挥密钥。' },
+      reward: { id: 'antenna-command-key', name: '阵列指挥密钥', kind: 'electronics', rarity: 'red', value: 17000 * 7, quantity: 1, description: '可接管雷达阵列的指挥密钥。' },
     },
     {
       name: '山地猎手「白噪」',
-      reward: { id: 'white-noise-module', name: '白噪干扰模块', kind: 'electronics', rarity: 'red', value: 19000, quantity: 1, description: '经过特殊改装的宽频干扰装置。' },
+      reward: { id: 'white-noise-module', name: '白噪干扰模块', kind: 'electronics', rarity: 'red', value: 19000 * 7, quantity: 1, description: '经过特殊改装的宽频干扰装置。' },
     },
   ],
   refinery: [
     {
       name: '炼化主管「赤炉」',
-      reward: { id: 'red-furnace-seal', name: '赤炉安全印章', kind: 'intel', rarity: 'red', value: 18000, quantity: 1, description: '炼化区核心设备的安全认证印章。' },
+      reward: { id: 'red-furnace-seal', name: '赤炉安全印章', kind: 'intel', rarity: 'red', value: 18000 * 7, quantity: 1, description: '炼化区核心设备的安全认证印章。' },
     },
     {
       name: '应急队长「火墙」',
-      reward: { id: 'firewall-controller', name: '防爆控制器', kind: 'electronics', rarity: 'red', value: 20000, quantity: 1, description: '控制炼化区防爆隔离门的工业终端。' },
+      reward: { id: 'firewall-controller', name: '防爆控制器', kind: 'electronics', rarity: 'red', value: 20000 * 7, quantity: 1, description: '控制炼化区防爆隔离门的工业终端。' },
     },
   ],
   administration: [
     {
       name: '特勤长「铁幕」',
-      reward: { id: 'iron-curtain-token', name: '特勤授权令牌', kind: 'intel', rarity: 'red', value: 21000, quantity: 1, description: '行政辖区特勤部队的调度凭证。' },
+      reward: { id: 'iron-curtain-token', name: '特勤授权令牌', kind: 'intel', rarity: 'red', value: 21000 * 7, quantity: 1, description: '行政辖区特勤部队的调度凭证。' },
     },
     {
       name: '辖区总长「壁垒」',
-      reward: { id: 'warden-access-card', name: '辖区总长权限卡', kind: 'intel', rarity: 'red', value: 22000, quantity: 1, description: '「壁垒」随身携带的中央档案访问凭证。' },
+      reward: { id: 'warden-access-card', name: '辖区总长权限卡', kind: 'intel', rarity: 'red', value: 22000 * 7, quantity: 1, description: '「壁垒」随身携带的中央档案访问凭证。' },
     },
   ],
   reservoir: [
     {
       name: '坝区守卫「洪峰」',
-      reward: { id: 'flood-crest-key', name: '坝体应急密钥', kind: 'electronics', rarity: 'red', value: 20000, quantity: 1, description: '控制坝体应急闸门的加密密钥。' },
+      reward: { id: 'flood-crest-key', name: '坝体应急密钥', kind: 'electronics', rarity: 'red', value: 20000 * 7, quantity: 1, description: '控制坝体应急闸门的加密密钥。' },
     },
     {
       name: '管道猎手「暗流」',
-      reward: { id: 'undercurrent-map', name: '地下管网图', kind: 'intel', rarity: 'red', value: 23000, quantity: 1, description: '标记黑峡地下设施的完整管网图。' },
+      reward: { id: 'undercurrent-map', name: '地下管网图', kind: 'intel', rarity: 'red', value: 23000 * 7, quantity: 1, description: '标记黑峡地下设施的完整管网图。' },
     },
   ],
 };
 
 const FALL_RECOVERY_Y = -5;
+const INTERACTION_RANGE = 3.2;
+const INTERACTION_VERTICAL_TOLERANCE = 2.8;
+const LOOT_SEARCH_RANGE = 3.8;
 
 const DIFFICULTIES: Record<DifficultyId, { enemyCount: number; health: number; damage: number; accuracy: number; fireDelay: number }> = {
   recruit: { enemyCount: 0.65, health: 1, damage: 1, accuracy: 1, fireDelay: 1 },
@@ -1049,11 +1069,14 @@ const HIGH_VALUE_TASK_REWARD: InventoryItem = {
   name: '大红非洲之心',
   kind: 'intel',
   rarity: 'red',
-  value: 50000,
+  value: 50000 * 7,
   quantity: 1,
 };
 
 const RARITY_ORDER: InventoryItem['rarity'][] = ['black', 'white', 'green', 'blue', 'purple', 'gold', 'red'];
+// 高级物资仍会出现，但红/金不再频繁刷屏；首领固定奖励不受此随机倍率影响。
+// 红/金是稀有惊喜，常规容器降低出现率；首领和任务固定奖励仍保持不变。
+const RARITY_DROP_SCALE = [1, 1, 1, 1, 1, 0.24, 0.06];
 const MAX_RENDER_SCALE = 1.5;
 const MIN_RENDER_SCALE = 0.62;
 const MIN_FRAME_INTERVAL_MS = 1000 / 60 - 1;
@@ -1119,6 +1142,7 @@ export class CriticalExtractionGame {
   private readonly impactParticles: ImpactParticleRuntime[] = [];
   private readonly destructibles: DestructibleRuntime[] = [];
   private readonly smokes: SmokeRuntime[] = [];
+  private readonly magneticBombs: MagneticBombRuntime[] = [];
   private smokeTexture: THREE.CanvasTexture | null = null;
   private impactMaterials!: Record<ImpactSurface | 'armor', THREE.MeshBasicMaterial>;
   private readonly loot: LootRuntime[] = [];
@@ -1276,6 +1300,8 @@ export class CriticalExtractionGame {
   private adrenalineHealingRemaining = 0;
   private runCooldownEndsAt = 0;
   private runEndsAt = 0;
+  private magneticCharges = 2;
+  private magneticCooldownEndsAt = 0;
   private deployEndsAt = 0;
   private updateAccumulator = 0;
   private aiAccumulator = 0;
@@ -1312,7 +1338,7 @@ export class CriticalExtractionGame {
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.callbacks = callbacks;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: false });
     this.renderer.setPixelRatio(this.renderScale);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1330,9 +1356,9 @@ export class CriticalExtractionGame {
     const deviceScale = Math.max(1, window.devicePixelRatio || 1);
     const quality = {
       low: { target: 0.68, min: MIN_RENDER_SCALE, max: 0.76, shadows: false, shadowSize: 512, lights: 0, fog: 0.0037, far: 250 },
-      medium: { target: 0.82, min: 0.66, max: 0.9, shadows: true, shadowSize: 768, lights: 18, fog: 0.003, far: 330 },
-      high: { target: Math.min(deviceScale, 1), min: 0.7, max: 1, shadows: true, shadowSize: 1024, lights: 28, fog: 0.00235, far: 430 },
-      ultra: { target: Math.min(deviceScale, 1.2), min: 0.82, max: 1.25, shadows: true, shadowSize: 1536, lights: 42, fog: 0.0019, far: 520 },
+      medium: { target: Math.min(deviceScale, 1.05), min: 0.82, max: 1.15, shadows: true, shadowSize: 1024, lights: 18, fog: 0.003, far: 330 },
+      high: { target: Math.min(deviceScale, 1.4), min: 0.9, max: 1.5, shadows: true, shadowSize: 2048, lights: 28, fog: 0.00235, far: 430 },
+      ultra: { target: Math.min(deviceScale, 1.5), min: 1, max: 1.8, shadows: true, shadowSize: 3072, lights: 42, fog: 0.0019, far: 520 },
     }[settings.quality];
     this.qualityLevel = settings.quality;
     this.qualityMinScale = quality.min;
@@ -1630,7 +1656,7 @@ export class CriticalExtractionGame {
           name: `${enemy.name}的红色身份牌`,
           kind: 'intel',
           rarity: 'red',
-          value: 32000,
+          value: 32000 * 7,
           quantity: 1,
           description: '首领追猎专属红色战利品。',
         };
@@ -1920,6 +1946,7 @@ export class CriticalExtractionGame {
       // 后台标签页只暂停更新，不主动销毁 WebGL 上下文。部分浏览器和内置预览
       // 无法可靠地恢复被脚本强制销毁的上下文，回来后会表现为白屏或闪退。
       this.webGlSuspendedInBackground = true;
+      this.animationFaulted = false;
       return;
     }
     const wasSuspended = this.webGlSuspendedInBackground;
@@ -2009,7 +2036,12 @@ export class CriticalExtractionGame {
     if (event.code === 'Digit1') this.switchWeapon('rifle');
     if (event.code === 'Digit2') this.switchWeapon('smg');
     if (event.code === 'Digit3') this.switchWeapon('shotgun');
-    if (event.code === 'KeyQ') this.setAiming(!this.aiming);
+    // Q used to toggle aiming, but right mouse already owns aiming. Keep Q for
+    // the throwable so a single press always throws one of the two charges.
+    if (event.code === 'KeyQ' && !event.repeat) {
+      event.preventDefault();
+      this.throwMagneticBomb();
+    }
     if (this.isActionCode(event.code, 'reload') && !event.repeat) this.startReload();
     if (this.isActionCode(event.code, 'run') && !event.repeat) this.activateRun();
     if (event.code === 'Digit4') this.useMedkit();
@@ -2144,6 +2176,8 @@ export class CriticalExtractionGame {
       adrenalineActive: abilitySecondsRemaining(now, this.adrenalineEndsAt),
       runCooldown: abilitySecondsRemaining(now, this.runCooldownEndsAt),
       runActive: abilitySecondsRemaining(now, this.runEndsAt),
+      magneticCharges: this.magneticCharges,
+      magneticCooldown: abilitySecondsRemaining(now, this.magneticCooldownEndsAt),
     };
   }
 
@@ -4837,9 +4871,7 @@ export class CriticalExtractionGame {
 
   private rollContainerLoot(tier: ContainerTier, random: SeededRandom, operationId: MapId = this.activeOperation.id): InventoryItem[] {
     const rule = CONTAINER_RULES[tier];
-    const weights = operationId === 'administration' && tier !== 'vault'
-      ? rule.weights.map((weight, index) => index === 5 ? weight * 1.8 : index === 6 ? 0 : weight)
-      : rule.weights;
+    const weights = rule.weights.map((weight, index) => weight * RARITY_DROP_SCALE[index]);
     const count = rule.min + Math.floor(random.next() * (rule.max - rule.min + 1));
     const results: InventoryItem[] = [];
     for (let index = 0; index < count; index += 1) {
@@ -4882,11 +4914,12 @@ export class CriticalExtractionGame {
   }
 
   private rollEnemyLoot(enemy: EnemyRuntime, random: SeededRandom): InventoryItem[] {
-    const weights = enemy.boss
+    const baseWeights = enemy.boss
       ? [0, 1, 5, 14, 27, 38, 15]
       : enemy.elite
         ? [2, 10, 25, 29, 22, 10.5, 1.5]
         : [10, 27, 31, 20, 9, 2.7, 0.3];
+    const weights = baseWeights.map((weight, index) => weight * RARITY_DROP_SCALE[index]);
     const minimum = enemy.boss ? 6 : enemy.elite ? 3 : 2;
     const maximum = enemy.boss ? 8 : enemy.elite ? 5 : 4;
     const count = minimum + Math.floor(random.next() * (maximum - minimum + 1));
@@ -5231,7 +5264,7 @@ export class CriticalExtractionGame {
       );
       if (targetContainer) {
         const challengeItem: InventoryItem = {
-          id: 'challenge-package', name: '指定回收样本', kind: 'intel', rarity: 'purple', value: 3200, quantity: 1,
+          id: 'challenge-package', name: '指定回收样本', kind: 'intel', rarity: 'purple', value: 3200 * 7, quantity: 1,
           description: '小型挑战指定物品，成功带出可获得额外奖励。',
         };
         const otherItems = targetContainer.items.filter((item) => item.id !== challengeItem.id);
@@ -5646,6 +5679,13 @@ export class CriticalExtractionGame {
     try {
       this.renderFrame(frameTime);
     } catch (error) {
+      // 切换标签页时浏览器可能短暂返回无效画面，恢复前继续保留渲染循环。
+      if (document.hidden || this.webGlSuspendedInBackground) {
+        this.animationFaulted = false;
+        this.clock.getDelta();
+        this.animationFrameId = requestAnimationFrame(this.animate);
+        return;
+      }
       this.animationFaulted = true;
       cancelAnimationFrame(this.animationFrameId);
       this.releaseHeldInputs();
@@ -8050,7 +8090,7 @@ export class CriticalExtractionGame {
     }
     const playerPosition = this.camera.position;
     let nearest: LootRuntime | 'objective' | 'checkpoint' | 'task-item' | 'task-radio' | 'extract-condition' | 'secret-reader' | 'field-trader' | null = null;
-    let nearestDistance = 2.35;
+    let nearestDistance = INTERACTION_RANGE;
     const traderPosition = this.activeOperation.spawn;
     const traderDistance = Math.hypot(playerPosition.x - traderPosition.x, playerPosition.z - traderPosition.z);
     if (traderDistance < nearestDistance) {
@@ -8058,35 +8098,35 @@ export class CriticalExtractionGame {
       nearestDistance = traderDistance;
     }
     if (this.highValueTaskStage === 'collect' && this.taskHardDrive.visible) {
-      const distance = playerPosition.distanceTo(this.taskHardDrive.position);
+      const distance = this.interactionDistanceTo(this.taskHardDrive.position);
       if (distance < nearestDistance) {
         nearest = 'task-item';
         nearestDistance = distance;
       }
     }
     if (this.highValueTaskStage === 'deliver' && this.taskRadio.visible) {
-      const distance = playerPosition.distanceTo(this.taskRadio.position);
+      const distance = this.interactionDistanceTo(this.taskRadio.position);
       if (distance < nearestDistance) {
         nearest = 'task-radio';
         nearestDistance = distance;
       }
     }
     if (this.activeOperation.id === 'reservoir' && this.missionTerminal.visible && !this.reservoirTerminalActivated) {
-      const distance = playerPosition.distanceTo(this.missionTerminal.position);
+      const distance = this.interactionDistanceTo(this.missionTerminal.position);
       if (distance < nearestDistance) {
         nearest = 'checkpoint';
         nearestDistance = distance;
       }
     }
     if (this.activeOperation.id === 'administration' && !this.administrationSecretUnlocked) {
-      const distance = playerPosition.distanceTo(this.administrationSecretReader.position);
+      const distance = this.interactionDistanceTo(this.administrationSecretReader.position);
       if (distance < nearestDistance) {
         nearest = 'secret-reader';
         nearestDistance = distance;
       }
     }
     if (this.objectiveCase.visible) {
-      const distance = playerPosition.distanceTo(this.objectiveCase.position);
+      const distance = this.interactionDistanceTo(this.objectiveCase.position);
       if (distance < nearestDistance) {
         nearest = 'objective';
         nearestDistance = distance;
@@ -8104,7 +8144,7 @@ export class CriticalExtractionGame {
     }
     for (const entry of this.loot) {
       if (entry.opened || entry.operationId !== this.activeOperation.id) continue;
-      const distance = playerPosition.distanceTo(entry.position);
+      const distance = this.interactionDistanceTo(entry.position);
       if (distance < nearestDistance) {
         nearest = entry;
         nearestDistance = distance;
@@ -8112,7 +8152,7 @@ export class CriticalExtractionGame {
     }
     for (const entry of this.corpseLoot) {
       if (entry.opened) continue;
-      const distance = playerPosition.distanceTo(entry.position);
+      const distance = this.interactionDistanceTo(entry.position);
       if (distance < nearestDistance) {
         nearest = entry;
         nearestDistance = distance;
@@ -8140,6 +8180,12 @@ export class CriticalExtractionGame {
     else if (nearest === 'extract-condition') this.callbacks.onPrompt(this.modeLockedMessage());
     else if (nearest) this.callbacks.onPrompt(nearest.source === 'corpse' ? `搜索 ${nearest.containerName}` : `搜索 ${nearest.containerName}`);
     else this.callbacks.onPrompt(null);
+  }
+
+  private interactionDistanceTo(target: THREE.Vector3): number {
+    const verticalDistance = Math.abs(this.camera.position.y - target.y);
+    if (verticalDistance > INTERACTION_VERTICAL_TOLERANCE) return Number.POSITIVE_INFINITY;
+    return Math.hypot(this.camera.position.x - target.x, this.camera.position.z - target.z);
   }
 
   private startLootSearch(entry: LootRuntime): void {
@@ -8175,7 +8221,7 @@ export class CriticalExtractionGame {
   private updateLootSearch(now: number): void {
     const search = this.lootSearch;
     if (!search) return;
-    if (search.phase === 'searching' && this.camera.position.distanceTo(search.entry.position) > 2.8) {
+    if (search.phase === 'searching' && this.interactionDistanceTo(search.entry.position) > LOOT_SEARCH_RANGE) {
       this.cancelLootSearch('距离过远，搜索中断');
       return;
     }
@@ -8274,10 +8320,21 @@ export class CriticalExtractionGame {
     if (!search?.revealed) return;
     let backpack = this.run.backpack;
     let collected = 0;
-    const transferAll = (source: InventoryItem[]): InventoryItem[] => {
+    const transferAll = (source: InventoryItem[], equipmentSource = false): InventoryItem[] => {
       const remaining: InventoryItem[] = [];
       for (const item of source) {
-        const result = addInventoryItem(backpack, item, this.backpackCapacity);
+        let result = addInventoryItem(backpack, item, this.backpackCapacity);
+        if (!result.added && equipmentSource && backpackUsedSlots(backpack) >= this.backpackCapacity
+          && search.entry.items.length < search.entry.capacity) {
+          const candidate = [...backpack]
+            .filter((entry) => entry.equipmentSlot === undefined)
+            .sort((left, right) => left.value * left.quantity - right.value * right.quantity)[0];
+          if (candidate) {
+            const reducedBackpack = backpack.filter((entry) => entry !== candidate);
+            result = addInventoryItem(reducedBackpack, item, this.backpackCapacity);
+            if (result.added) search.entry.items = [...search.entry.items, candidate];
+          }
+        }
         if (!result.added) {
           remaining.push(item);
           continue;
@@ -8288,7 +8345,7 @@ export class CriticalExtractionGame {
       }
       return remaining;
     };
-    const remainingEquipment = transferAll(search.entry.equipment ?? []);
+    const remainingEquipment = transferAll(search.entry.equipment ?? [], true);
     const remainingItems = transferAll(search.entry.items);
     if (collected === 0) {
       this.callbacks.onToast('背包空间不足', 'danger');
@@ -8327,9 +8384,23 @@ export class CriticalExtractionGame {
     const fromEquipment = equipment.some((item) => item.id === itemId);
     const source = fromEquipment ? equipment : search.entry.items;
     const collectedItem = source.find((item) => item.id === itemId);
-    const transfer = transferInventoryItem(source, this.run.backpack, itemId, this.backpackCapacity);
+    let transfer = transferInventoryItem(source, this.run.backpack, itemId, this.backpackCapacity);
+    let swappedOut: InventoryItem | null = null;
+    if (!transfer.transferred && fromEquipment && backpackUsedSlots(this.run.backpack) >= this.backpackCapacity) {
+      const candidate = [...this.run.backpack]
+        .filter((item) => item.equipmentSlot === undefined)
+        .sort((left, right) => left.value * left.quantity - right.value * right.quantity)[0];
+      if (candidate && search.entry.items.length < search.entry.capacity) {
+        const reducedBackpack = this.run.backpack.filter((item) => item !== candidate);
+        transfer = transferInventoryItem(source, reducedBackpack, itemId, this.backpackCapacity);
+        if (transfer.transferred) {
+          search.entry.items = [...search.entry.items, candidate];
+          swappedOut = candidate;
+        }
+      }
+    }
     if (!transfer.transferred) {
-      this.callbacks.onToast('背包空间不足', 'danger');
+      this.callbacks.onToast(fromEquipment ? '背包已满，请先腾出一格再回收装备' : '背包空间不足', 'danger');
       return;
     }
     if (fromEquipment) search.entry.equipment = transfer.source;
@@ -8342,7 +8413,10 @@ export class CriticalExtractionGame {
       this.finishLootSearch(`${search.entry.containerName}已搜刮完毕`);
       return;
     }
-    this.refreshOpenLootView('已拿取物资 · 可继续点击或拖动');
+    this.refreshOpenLootView(swappedOut
+      ? `已回收装备 · ${swappedOut.name}已留在原地`
+      : '已拿取物资 · 可继续点击或拖动');
+    if (swappedOut) this.callbacks.onToast(`背包已满 · 已用 ${swappedOut.name} 换入装备`);
   }
 
   takeCorpseLootItem(itemId: string): void { this.takeLootItem(itemId); }
@@ -8638,7 +8712,7 @@ export class CriticalExtractionGame {
         name: `${this.challengeDefinitions[0].name}纪念章`,
         kind: 'intel',
         rarity: 'gold',
-        value: 3600,
+        value: 3600 * 7,
         quantity: 1,
         description: '完成本局小型挑战获得的高价值奖励。',
       };
@@ -8950,6 +9024,8 @@ export class CriticalExtractionGame {
     this.playerBody.setTranslation({ x: safe.x, y: 0.9, z: safe.z }, true);
     this.playerBody.setNextKinematicTranslation({ x: safe.x, y: 0.9, z: safe.z });
     this.lastSafePlayerPosition.set(safe.x, 0.9, safe.z);
+    this.lastPlayerHorizontalPosition.set(safe.x, 0.9, safe.z);
+    this.stuckPlayerSeconds = 0;
     this.camera.position.set(safe.x, 1.52, safe.z);
     this.verticalVelocity = 0;
     this.landingKick = 0;
@@ -8971,6 +9047,8 @@ export class CriticalExtractionGame {
     this.playerBody.setTranslation({ x: safe.x, y: safe.y, z: safe.z }, true);
     this.playerBody.setNextKinematicTranslation({ x: safe.x, y: safe.y, z: safe.z });
     this.camera.position.set(safe.x, safe.y + this.cameraHeight, safe.z);
+    this.lastPlayerHorizontalPosition.set(safe.x, safe.y, safe.z);
+    this.stuckPlayerSeconds = 0;
     this.verticalVelocity = 0;
     this.landingKick = 0;
     this.groundedBlend = 1;

@@ -10,9 +10,9 @@ interface ArmorProfile {
 }
 
 const ARMOR_PROFILES: Record<EnemyArmorClass, ArmorProfile> = {
-  regular: { name: '制式防弹衣', rarities: ['black', 'white', 'green', 'blue'], values: [260, 680, 1200, 1900] },
-  elite: { name: '重甲战术防弹衣', rarities: ['black', 'green', 'blue', 'purple'], values: [650, 1800, 3400, 5900] },
-  boss: { name: '指挥级重型胸甲', rarities: ['black', 'purple', 'gold', 'red'], values: [1600, 4800, 9200, 16800] },
+  regular: { name: '制式防弹衣', rarities: ['black', 'white', 'green', 'blue'], values: [260, 680, 1200, 1900].map((value) => value * 7) as [number, number, number, number] },
+  elite: { name: '重甲战术防弹衣', rarities: ['black', 'green', 'blue', 'purple'], values: [650, 1800, 3400, 5900].map((value) => value * 7) as [number, number, number, number] },
+  boss: { name: '指挥级重型胸甲', rarities: ['black', 'purple', 'gold', 'red'], values: [1600, 4800, 9200, 16800].map((value) => value * 7) as [number, number, number, number] },
 };
 
 interface FixedEquipmentProfile {
@@ -22,9 +22,9 @@ interface FixedEquipmentProfile {
 }
 
 const HELMET_PROFILES: Record<EnemyArmorClass, FixedEquipmentProfile> = {
-  regular: { name: '制式 M2 战术头盔', rarity: 'green', value: 900 },
-  elite: { name: '哨兵 H4 重型头盔', rarity: 'purple', value: 3600 },
-  boss: { name: '指挥官 X7 全防头盔', rarity: 'red', value: 11800 },
+  regular: { name: '制式 M2 战术头盔', rarity: 'green', value: 900 * 7 },
+  elite: { name: '哨兵 H4 重型头盔', rarity: 'purple', value: 3600 * 7 },
+  boss: { name: '指挥官 X7 全防头盔', rarity: 'red', value: 11800 * 7 },
 };
 
 interface RecoveredWeaponProfile {
@@ -33,9 +33,9 @@ interface RecoveredWeaponProfile {
 }
 
 const WEAPON_PROFILES: Record<RecoveredEnemyWeaponId, RecoveredWeaponProfile> = {
-  smg: { name: 'V9 冲锋枪', values: { regular: 1800, elite: 4200, boss: 8800 } },
-  shotgun: { name: 'SG-12 战术霰弹枪', values: { regular: 2400, elite: 5100, boss: 9800 } },
-  sniper: { name: 'M24 精确步枪', values: { regular: 3200, elite: 6800, boss: 12600 } },
+  smg: { name: 'V9 冲锋枪', values: { regular: 1800 * 7, elite: 4200 * 7, boss: 8800 * 7 } },
+  shotgun: { name: 'SG-12 战术霰弹枪', values: { regular: 2400 * 7, elite: 5100 * 7, boss: 9800 * 7 } },
+  sniper: { name: 'M24 精确步枪', values: { regular: 3200 * 7, elite: 6800 * 7, boss: 12600 * 7 } },
 };
 
 const WEAPON_RARITIES: Record<EnemyArmorClass, ItemRarity> = {

@@ -30,6 +30,7 @@ import {
   createRunState,
   formatTime,
   inventoryValue,
+  backpackUsedSlots,
   parseProfile,
   buyMarketItem,
   buyAmmoPack,
@@ -103,6 +104,13 @@ if (!app) throw new Error('Missing #app');
 
 const CORE_MARKET_CATALOG: Array<{ item: InventoryItem; price: number }> = [
   { item: { id: 'market-bandage', name: '军用止血带', kind: 'medical', rarity: 'green', value: 420, quantity: 1 }, price: 680 },
+  { item: { id: 'market-stamina-injector', name: '战术体力针', kind: 'medical', rarity: 'green', value: 980, quantity: 1, description: '短时间恢复冲刺耐力，适合长距离转移。' }, price: 1480 },
+  { item: { id: 'market-adrenaline-injector', name: '肾上腺素注射针', kind: 'medical', rarity: 'blue', value: 2100, quantity: 1, description: '应急注射剂，缓解伤势并提升行动状态。' }, price: 3150 },
+  { item: { id: 'market-nutrition-gel', name: '高能营养凝胶', kind: 'supplies', rarity: 'white', value: 260, quantity: 1, description: '轻量高热量补给，适合持续搜索行动。' }, price: 390 },
+  { item: { id: 'market-field-meal', name: '战地恢复餐', kind: 'supplies', rarity: 'green', value: 760, quantity: 1, description: '密封恢复餐，补充体力并稳定状态。' }, price: 1140 },
+  { item: { id: 'market-signal-decoder', name: '便携信号解码器', kind: 'intel', rarity: 'purple', value: 4100, quantity: 1, description: '可交易的特殊情报设备，来源不明。' }, price: 6150 },
+  { item: { id: 'market-black-box', name: '失事无人机黑匣', kind: 'electronics', rarity: 'gold', value: 9300, quantity: 1, description: '记录关键航线数据的特殊设备。' }, price: 13950 },
+  { item: { id: 'market-command-seal', name: '战区指挥密印', kind: 'intel', rarity: 'red', value: 22400, quantity: 1, description: '极稀有特殊物品，适合收藏或高价回收。' }, price: 33600 },
   { item: { id: 'market-toolkit', name: '便携维修组件', kind: 'supplies', rarity: 'blue', value: 860, quantity: 1 }, price: 1380 },
   { item: { id: 'market-radio', name: '战术通信模块', kind: 'electronics', rarity: 'blue', value: 1120, quantity: 1 }, price: 1780 },
   { item: { id: 'market-intel', name: '区域通行情报', kind: 'intel', rarity: 'purple', value: 2200, quantity: 1 }, price: 3400 },
@@ -113,7 +121,7 @@ const CORE_MARKET_CATALOG: Array<{ item: InventoryItem; price: number }> = [
 // Each page load publishes a different public batch from the full catalog.
 const marketRotationStart = Math.floor(Math.random() * LOOT_CATALOG.length);
 const ROTATING_MARKET_CATALOG: Array<{ item: InventoryItem; price: number }> = Array.from({ length: 8 }, (_, index) => {
-  const source = LOOT_CATALOG[(marketRotationStart + index * 157) % LOOT_CATALOG.length];
+      const source = LOOT_CATALOG[(marketRotationStart + index * 157) % LOOT_CATALOG.length];
   return { item: { ...source, quantity: 1 }, price: Math.round(source.value * 1.35) };
 });
 const MARKET_CATALOG = [...CORE_MARKET_CATALOG, ...ROTATING_MARKET_CATALOG];
@@ -1013,7 +1021,11 @@ function renderInventory(items: InventoryItem[], secureItems: InventoryItem[], s
       slot.dataset.backpackItem = item.id;
       slot.dataset.selectItem = item.id;
       slot.classList.toggle('is-selected', selectedInventoryItemIds.has(item.id));
-      slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''}</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button></div>`;
+      const footprint = (item.slotWidth ?? 1) * (item.slotHeight ?? 1);
+      slot.style.gridColumn = `span ${item.slotWidth ?? 1}`;
+      slot.style.gridRow = `span ${item.slotHeight ?? 1}`;
+      slot.title = `占用 ${footprint} 格（${item.slotWidth ?? 1}×${item.slotHeight ?? 1}）`;
+      slot.innerHTML = `<div class="loot-kind">${rarityName(item.rarity)}${item.quantity > 1 ? ` · × ${item.quantity}` : ''} · ${footprint}格</div><strong>${item.name}</strong><small class="inventory-unit-value">单件 ${item.value.toLocaleString('zh-CN')}</small><div class="inventory-slot-footer"><span class="stash-value">${(item.value * item.quantity).toLocaleString('zh-CN')}</span><button class="inventory-secure" type="button" data-secure-item="${item.id}" title="失败后保留">放入安全箱</button></div>`;
     }
     grid.append(slot);
   }
@@ -1032,6 +1044,7 @@ function renderInventory(items: InventoryItem[], secureItems: InventoryItem[], s
 
 function corpseLootSlot(item: InventoryItem, origin: 'loot' | 'backpack', comparisonValue: number | null, fresh = false, locked = false): string {
   const value = (item.value * item.quantity).toLocaleString('zh-CN');
+  const footprint = (item.slotWidth ?? 1) * (item.slotHeight ?? 1);
   const interactive = origin === 'loot' && !locked;
   const tag = interactive ? 'button' : 'div';
   const difference = comparisonValue === null ? null : item.value * item.quantity - comparisonValue;
@@ -1041,7 +1054,7 @@ function corpseLootSlot(item: InventoryItem, origin: 'loot' | 'backpack', compar
     : '';
   return `<${tag} class="corpse-loot-item${fresh ? ' is-fresh' : ''}" data-rarity="${item.rarity}" data-kind="${item.kind}" data-loot-origin="${origin}" data-loot-item-id="${item.id}" draggable="${locked ? 'false' : 'true'}" ${interactive ? 'type="button"' : ''} title="${item.description ?? item.name}">
     <span class="corpse-item-mark">${item.kind === 'armor' ? '甲' : item.kind === 'helmet' ? '盔' : item.kind === 'weapon' ? '枪' : item.name.slice(0, 1)}</span>
-    <small>${rarityName(item.rarity)} · ${kindLabel(item.kind)}</small>
+    <small>${rarityName(item.rarity)} · ${kindLabel(item.kind)} · ${footprint}格</small>
     <strong>${item.name}</strong>
     <b>${item.quantity > 1 ? `× ${item.quantity} · ` : ''}${value}</b>
     ${durability}
@@ -1090,7 +1103,7 @@ function renderCorpseLoot(state: LootSearchView): void {
     ? `${inventoryValue([...visibleEquipment, ...visibleItems]).toLocaleString('zh-CN')} 金币`
     : '识别中';
   byId('corpse-loot-capacity').textContent = `${state.revealedSlots} / ${state.capacity}`;
-  byId('corpse-player-capacity').textContent = `${latestRun.backpack.length} / ${activeBackpackSlots}`;
+  byId('corpse-player-capacity').textContent = `${backpackUsedSlots(latestRun.backpack)} / ${activeBackpackSlots}`;
   byId('corpse-player-value').textContent = `${inventoryValue(latestRun.backpack).toLocaleString('zh-CN')} 金币`;
   byId('corpse-player-weapon').textContent = byId('weapon-name').textContent ?? '当前武器';
   byId('corpse-loot-message').textContent = state.message;
@@ -1127,7 +1140,7 @@ function renderCorpseLoot(state: LootSearchView): void {
 
     const playerGrid = byId('corpse-player-grid');
     playerGrid.innerHTML = latestRun.backpack.map((item) => corpseLootSlot(item, 'backpack', null)).join('')
-      + Array.from({ length: Math.max(0, activeBackpackSlots - latestRun.backpack.length) }, (_, index) => `<div class="corpse-loot-item is-empty">${String(latestRun.backpack.length + index + 1).padStart(2, '0')}</div>`).join('');
+      + Array.from({ length: Math.max(0, activeBackpackSlots - backpackUsedSlots(latestRun.backpack)) }, (_, index) => `<div class="corpse-loot-item is-empty">${String(backpackUsedSlots(latestRun.backpack) + index + 1).padStart(2, '0')}</div>`).join('');
   }
 }
 

@@ -17,7 +17,7 @@ export const ADMIN_SECRET_CARD: InventoryItem = {
   name: '行政主楼档案室房卡',
   kind: 'intel',
   rarity: 'purple',
-  value: 2600,
+  value: 2600 * 7,
   quantity: 1,
   keyUses: 3,
   maxKeyUses: 3,

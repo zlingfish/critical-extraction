@@ -126,8 +126,11 @@ export function moveItemFromSecureContainer(
   backpackCapacity: number,
 ): { backpack: InventoryItem[]; secureContainer: InventoryItem[]; moved: boolean } {
   const index = secureContainer.findIndex((item) => item.id === itemId);
-  if (index < 0 || backpack.length >= backpackCapacity) return { backpack, secureContainer, moved: false };
+  if (index < 0) return { backpack, secureContainer, moved: false };
   const item = secureContainer[index];
+  const usedSlots = backpack.reduce((sum, entry) => sum + Math.max(1, (entry.slotWidth ?? 1) * (entry.slotHeight ?? 1)), 0);
+  const itemSlots = Math.max(1, (item.slotWidth ?? 1) * (item.slotHeight ?? 1));
+  if (usedSlots + itemSlots > backpackCapacity) return { backpack, secureContainer, moved: false };
   return {
     backpack: [...backpack, item],
     secureContainer: secureContainer.filter((_, itemIndex) => itemIndex !== index),

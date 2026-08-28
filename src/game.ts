@@ -185,7 +185,7 @@ export class CriticalExtractionGame {
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.callbacks = callbacks;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false });
     const devicePixelRatio = window.devicePixelRatio || 1;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
     this.renderer.shadowMap.enabled = true;
@@ -753,9 +753,10 @@ export class CriticalExtractionGame {
     return mesh;
   }
 
-  private addStaticCollider(x: number, y: number, z: number, width: number, height: number, depth: number): void {
+  /** 创建场景碰撞体并返回它，扩展地图需要在切换地图时同步开关。 */
+  private addStaticCollider(x: number, y: number, z: number, width: number, height: number, depth: number): RAPIER.Collider {
     const body = this.physicsWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
-    this.physicsWorld.createCollider(RAPIER.ColliderDesc.cuboid(width / 2, height / 2, depth / 2), body);
+    return this.physicsWorld.createCollider(RAPIER.ColliderDesc.cuboid(width / 2, height / 2, depth / 2), body);
   }
 
   private makeTexture(kind: 'asphalt' | 'concrete' | 'metal', base: string, accent: string): THREE.CanvasTexture {
@@ -1652,7 +1653,9 @@ export class CriticalExtractionGame {
     }
     this.raycaster.set(origin, normalized);
     this.raycaster.far = distance;
-    const hit = this.raycaster.intersectObjects(this.blockers, false)[0];
+    // 隐藏地图的装饰物不应参与视线检测，避免切图后产生“看不见的墙”。
+    const visibleBlockers = this.blockers.filter((blocker) => blocker.visible);
+    const hit = this.raycaster.intersectObjects(visibleBlockers, false)[0];
     return !hit || hit.distance >= distance - 0.2;
   }
 

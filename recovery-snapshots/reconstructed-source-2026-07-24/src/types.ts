@@ -85,6 +85,9 @@ export interface InventoryItem {
   rarity: ItemRarity;
   value: number;
   quantity: number;
+  /** 背包网格占用：默认 1 格；大件可设置为 2x1、2x2 等。 */
+  slotWidth?: number;
+  slotHeight?: number;
   variant?: string;
   origin?: string;
   description?: string;

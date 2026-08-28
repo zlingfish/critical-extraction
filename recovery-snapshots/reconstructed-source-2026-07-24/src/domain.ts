@@ -15,6 +15,18 @@ import type {
 
 export const PROFILE_KEY = 'critical-extraction.profile.v1';
 export const BACKPACK_CAPACITY = 12;
+export const BACKPACK_GRID_WIDTH = 4;
+export const BACKPACK_GRID_HEIGHT = 3;
+
+export function inventoryItemSlots(item: InventoryItem): number {
+  const width = Math.max(1, Math.floor(item.slotWidth ?? 1));
+  const height = Math.max(1, Math.floor(item.slotHeight ?? 1));
+  return width * height;
+}
+
+export function backpackUsedSlots(items: readonly InventoryItem[]): number {
+  return items.reduce((sum, item) => sum + inventoryItemSlots(item), 0);
+}
 
 export function createDefaultProfile(): PersistentProfile {
   return {
@@ -116,7 +128,7 @@ export function addInventoryItem(
     );
     return { items: next, added: true };
   }
-  if (items.length >= capacity) return { items, added: false };
+  if (backpackUsedSlots(items) + inventoryItemSlots(item) > capacity) return { items, added: false };
   return { items: [...items, { ...item }], added: true };
 }
 

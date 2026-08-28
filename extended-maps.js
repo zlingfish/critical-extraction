@@ -123,9 +123,16 @@
       game.scene.add(root);
     }
 
+    // 每张扩展地图独立管理碰撞体。模型隐藏时必须同时关闭碰撞，否则会出现看不见的空气墙。
+    const mapColliders = new Map([
+      ['shipyard', []],
+      ['highlands', []],
+    ]);
+    let buildingMapId = null;
     const addCollider = (x, y, z, width, height, depth) => {
       if (typeof game.addStaticCollider === 'function') {
-        game.addStaticCollider(x, y, z, width, height, depth);
+        const collider = game.addStaticCollider(x, y, z, width, height, depth);
+        if (buildingMapId && collider) mapColliders.get(buildingMapId)?.push(collider);
       }
     };
 
@@ -277,8 +284,11 @@
       sign(root, '霜岭前哨 / 北境 12', 620, 3.2, 118, 14, '#9bd7cd', Math.PI);
     };
 
+    buildingMapId = 'shipyard';
     buildShipyard();
+    buildingMapId = 'highlands';
     buildHighlands();
+    buildingMapId = null;
 
     let activeCustomMap = null;
     const harborLoot = (game.loot ?? []).filter((entry) => entry.operationId === 'harbor');
@@ -307,8 +317,14 @@
     };
 
     const setMapVisibility = (mapId) => {
-      for (const [id, root] of Object.entries(roots)) root.visible = id === mapId;
+      for (const [id, root] of Object.entries(roots)) {
+        const active = id === mapId;
+        root.visible = active;
+        for (const collider of mapColliders.get(id) ?? []) collider.setEnabled(active);
+      }
     };
+    // 安装脚本时默认仍在九号物流港，先关闭两张扩展地图的碰撞体。
+    setMapVisibility(null);
 
     const updateCustomMenu = () => {
       if (!activeCustomMap) return;

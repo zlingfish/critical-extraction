@@ -20,6 +20,10 @@ const BLUEPRINTS: LootBlueprint[] = [
   { key: 'wire', name: '工业铜线卷', kind: 'supplies', rarity: 'black', value: 92 },
   { key: 'filter', name: '污染滤芯', kind: 'supplies', rarity: 'black', value: 115 },
   { key: 'bandage', name: '野战绷带包', kind: 'medical', rarity: 'black', value: 135 },
+  { key: 'stamina-injector', name: '战术体力针', kind: 'medical', rarity: 'green', value: 980 },
+  { key: 'adrenaline-injector', name: '肾上腺素注射针', kind: 'medical', rarity: 'blue', value: 2100 },
+  { key: 'nutrition-gel', name: '高能营养凝胶', kind: 'supplies', rarity: 'white', value: 260 },
+  { key: 'field-meal', name: '战地恢复餐', kind: 'supplies', rarity: 'green', value: 760 },
   { key: 'ration', name: '密封军粮盒', kind: 'supplies', rarity: 'white', value: 180 },
   { key: 'fuse', name: '高压保险管', kind: 'supplies', rarity: 'white', value: 220 },
   { key: 'medkit', name: '止血处理套件', kind: 'medical', rarity: 'white', value: 280 },
@@ -55,6 +59,9 @@ const BLUEPRINTS: LootBlueprint[] = [
   { key: 'central-key', name: '中央数据库母钥', kind: 'intel', rarity: 'red', value: 19800 },
   { key: 'prototype-core', name: '未公开原型核心', kind: 'electronics', rarity: 'red', value: 24200 },
   { key: 'regen-sample', name: '实验型再生医疗样本', kind: 'medical', rarity: 'red', value: 26800 },
+  { key: 'signal-decoder', name: '便携信号解码器', kind: 'intel', rarity: 'purple', value: 4100 },
+  { key: 'black-box', name: '失事无人机黑匣', kind: 'electronics', rarity: 'gold', value: 9300 },
+  { key: 'command-seal', name: '战区指挥密印', kind: 'intel', rarity: 'red', value: 22400 },
 ];
 
 const ORIGINS = [
@@ -63,11 +70,24 @@ const ORIGINS = [
 ];
 
 const VARIANTS = ['封存版', '军规版', '改装版'];
+/** 经济平衡：所有可搜刮目录物资价值统一提高 7 倍。 */
+export const LOOT_VALUE_MULTIPLIER = 7;
+
+function backpackShape(rarity: ItemRarity, kind: ItemKind, key: string): { slotWidth: number; slotHeight: number } {
+  // 高级电子设备和情报件做成大件，价值按占格数同步提升，避免“占两格却不值钱”。
+  if (rarity === 'red') return { slotWidth: 2, slotHeight: 2 };
+  if (rarity === 'gold') return { slotWidth: 2, slotHeight: 1 };
+  if (rarity === 'purple' && (kind === 'electronics' || kind === 'intel')) return { slotWidth: 1, slotHeight: 2 };
+  if (key.includes('injector') || key.includes('medkit')) return { slotWidth: 1, slotHeight: 2 };
+  return { slotWidth: 1, slotHeight: 1 };
+}
 
 export const LOOT_CATALOG: LootCatalogItem[] = BLUEPRINTS.flatMap((blueprint) =>
   ORIGINS.flatMap((origin, originIndex) =>
     VARIANTS.map((variant, variantIndex) => {
       const multiplier = 0.86 + originIndex * 0.018 + variantIndex * 0.065;
+      const shape = backpackShape(blueprint.rarity, blueprint.kind, blueprint.key);
+      const slotCount = shape.slotWidth * shape.slotHeight;
       const serial = `${String(originIndex + 1).padStart(2, '0')}-${String(variantIndex + 1).padStart(2, '0')}`;
       const name = `「${origin}」${blueprint.name} · ${variant} ${serial}`;
       return {
@@ -75,8 +95,9 @@ export const LOOT_CATALOG: LootCatalogItem[] = BLUEPRINTS.flatMap((blueprint) =>
         name,
         kind: blueprint.kind,
         rarity: blueprint.rarity,
-        value: Math.round(blueprint.value * multiplier),
+        value: Math.round(blueprint.value * multiplier * LOOT_VALUE_MULTIPLIER * slotCount),
         quantity: 1,
+        ...shape,
         variant: `${origin} / ${variant} / 批次 ${serial}`,
         origin,
         description: `${name}，来自${origin}的${variant}物资。批次状态会影响回收估值。`,

@@ -38,10 +38,13 @@ try {
   const entry = Object.values(manifest).find((item) => item.isEntry);
   if (!entry?.file) throw new Error('Missing Vite entry in build manifest');
 
-  const [shell, javascript, noBossMode, ...styleParts] = await Promise.all([
+  const [shell, javascript, noBossMode, extendedMaps, tenBossMode, weaponVariants, ...styleParts] = await Promise.all([
     readFile(resolve(workspaceRoot, 'game-shell.html'), 'utf8'),
     readFile(join(temporaryBuild, entry.file), 'utf8'),
     readFile(resolve(workspaceRoot, 'no-boss-mode.js'), 'utf8'),
+    readFile(resolve(workspaceRoot, 'extended-maps.js'), 'utf8'),
+    readFile(resolve(workspaceRoot, 'ten-boss-mode.js'), 'utf8'),
+    readFile(resolve(workspaceRoot, 'weapon-variants.js'), 'utf8'),
     ...(entry.css ?? []).map((file) => readFile(join(temporaryBuild, file), 'utf8')),
   ]);
 
@@ -54,6 +57,9 @@ try {
   );
   const safeJavascript = javascript.replace(/<\/script/gi, '<\\/script');
   const safeNoBossMode = noBossMode.replace(/<\/script/gi, '<\\/script');
+  const safeExtendedMaps = extendedMaps.replace(/<\/script/gi, '<\\/script');
+  const safeTenBossMode = tenBossMode.replace(/<\/script/gi, '<\\/script');
+  const safeWeaponVariants = weaponVariants.replace(/<\/script/gi, '<\\/script');
   const safeVisibilityScript = `
     <script>
       (() => {
@@ -92,7 +98,7 @@ try {
     </script>`;
   const output = cleanShell
     .replace('</head>', () => `    <style>\n${styleParts.join('\n')}\n    </style>\n  </head>`)
-    .replace('</body>', () => `    <script type="module">\n${safeJavascript}\n    </script>${safeVisibilityScript}\n    <script>\n${safeNoBossMode}\n    </script>\n  </body>`);
+    .replace('</body>', () => `    <script type="module">\n${safeJavascript}\n    </script>${safeVisibilityScript}\n    <script>\n${safeExtendedMaps}\n    </script>\n    <script>\n${safeTenBossMode}\n    </script>\n    <script>\n${safeWeaponVariants}\n    </script>\n    <script>\n${safeNoBossMode}\n    </script>\n  </body>`);
 
   const runtimeDirectory = '/tmp/critical-extraction-web';
   await Promise.all([

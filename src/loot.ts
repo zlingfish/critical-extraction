@@ -20,6 +20,10 @@ const BLUEPRINTS: LootBlueprint[] = [
   { key: 'wire', name: '工业铜线卷', kind: 'supplies', rarity: 'black', value: 92 },
   { key: 'filter', name: '污染滤芯', kind: 'supplies', rarity: 'black', value: 115 },
   { key: 'bandage', name: '野战绷带包', kind: 'medical', rarity: 'black', value: 135 },
+  { key: 'stamina-injector', name: '战术体力针', kind: 'medical', rarity: 'green', value: 980 },
+  { key: 'adrenaline-injector', name: '肾上腺素注射针', kind: 'medical', rarity: 'blue', value: 2100 },
+  { key: 'nutrition-gel', name: '高能营养凝胶', kind: 'supplies', rarity: 'white', value: 260 },
+  { key: 'field-meal', name: '战地恢复餐', kind: 'supplies', rarity: 'green', value: 760 },
   { key: 'ration', name: '密封军粮盒', kind: 'supplies', rarity: 'white', value: 180 },
   { key: 'fuse', name: '高压保险管', kind: 'supplies', rarity: 'white', value: 220 },
   { key: 'medkit', name: '止血处理套件', kind: 'medical', rarity: 'white', value: 280 },
@@ -55,6 +59,9 @@ const BLUEPRINTS: LootBlueprint[] = [
   { key: 'central-key', name: '中央数据库母钥', kind: 'intel', rarity: 'red', value: 19800 },
   { key: 'prototype-core', name: '未公开原型核心', kind: 'electronics', rarity: 'red', value: 24200 },
   { key: 'regen-sample', name: '实验型再生医疗样本', kind: 'medical', rarity: 'red', value: 26800 },
+  { key: 'signal-decoder', name: '便携信号解码器', kind: 'intel', rarity: 'purple', value: 4100 },
+  { key: 'black-box', name: '失事无人机黑匣', kind: 'electronics', rarity: 'gold', value: 9300 },
+  { key: 'command-seal', name: '战区指挥密印', kind: 'intel', rarity: 'red', value: 22400 },
 ];
 
 const ORIGINS = [
