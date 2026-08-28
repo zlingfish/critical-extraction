@@ -87,6 +87,19 @@ const initial = await command('Runtime.evaluate', { expression: `JSON.stringify(
 await command('Runtime.evaluate', { expression: `document.querySelector('[data-boss-mode="none"]')?.click()` });
 await command('Runtime.evaluate', { expression: `document.getElementById('deploy-button')?.click()` });
 await sleep(8000);
+const beforeInput = await command('Runtime.evaluate', { expression: `JSON.stringify((() => {
+  const game = window.__criticalExtraction.game;
+  return { x: game.camera.position.x, y: game.camera.position.y, z: game.camera.position.z, yaw: game.yaw, pitch: game.pitch };
+})())`, returnByValue: true });
+await command('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }))` });
+await sleep(700);
+await command('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }))` });
+await command('Runtime.evaluate', { expression: `window.dispatchEvent(new MouseEvent('mousemove', { clientX: innerWidth / 2 + 90, clientY: innerHeight / 2 - 24, bubbles: true }))` });
+await sleep(120);
+const afterInput = await command('Runtime.evaluate', { expression: `JSON.stringify((() => {
+  const game = window.__criticalExtraction.game;
+  return { x: game.camera.position.x, y: game.camera.position.y, z: game.camera.position.z, yaw: game.yaw, pitch: game.pitch };
+})())`, returnByValue: true });
 const active = await command('Runtime.evaluate', { expression: `JSON.stringify({
   phase: window.__criticalExtraction?.getRun?.().phase,
   runtimeError: !document.getElementById('runtime-error-screen')?.hidden,
@@ -137,6 +150,10 @@ const removedMapGuards = JSON.parse(removedMapGuardsResult.result?.result?.value
 const result = {
   initial: JSON.parse(initial.result?.result?.value ?? '{}'),
   active: JSON.parse(active.result?.result?.value ?? '{}'),
+  input: {
+    before: JSON.parse(beforeInput.result?.result?.value ?? '{}'),
+    after: JSON.parse(afterInput.result?.result?.value ?? '{}'),
+  },
   screenshotPath,
   screenshotSignal,
   removedMapGuards,
@@ -156,6 +173,8 @@ if (
   || result.initial.administrationRoute?.colliders !== 3
   || result.initial.administrationRouteBlocked
   || result.active.runtimeError
+  || Math.hypot(result.input.after.x - result.input.before.x, result.input.after.z - result.input.before.z) < 0.01
+  || Math.abs(result.input.after.yaw - result.input.before.yaw) < 0.01
   || result.active.phase !== 'active'
   || !(result.screenshotSignal > 0)
   || result.active.bossMode !== 'none'

@@ -1157,6 +1157,10 @@ export class CriticalExtractionGame {
   private readonly enemyEyeScratch = new THREE.Vector3();
   private readonly enemyToPlayerScratch = new THREE.Vector3();
   private readonly enemyDirectionScratch = new THREE.Vector3();
+  // Shared scratch vectors used by the enemy update loop. Keeping these on the
+  // game instance avoids allocating a new vector for every AI every frame.
+  private readonly enemyLookTargetScratch = new THREE.Vector3();
+  private readonly enemyMuzzleScratch = new THREE.Vector3();
   private readonly enemyPreviousScratch = new THREE.Vector3();
   private readonly enemyDesiredScratch = new THREE.Vector3();
   private readonly enemyMovedScratch = new THREE.Vector3();
@@ -1465,6 +1469,15 @@ export class CriticalExtractionGame {
     this.audio.unlock();
     this.run = createRunState();
     this.configureOperationSystems();
+    // 进入战区后先开放键盘移动，不把 Pointer Lock 当成移动前置条件。
+    // Safari、内置浏览器和触控板环境可能拒绝锁鼠标，但 WASD 仍应立即可用；
+    // 点击画面后再尝试锁定鼠标，失败时继续使用普通指针视角。
+    this.controlsActive = true;
+    this.fallbackLookActive = true;
+    this.fallbackPointerX = window.innerWidth / 2;
+    this.fallbackPointerY = window.innerHeight / 2;
+    this.callbacks.onControlCapture(false);
+    this.callbacks.onControlStatus('WASD 可直接移动 · 点击画面锁定鼠标转向');
     const maximumArmor = this.activeGameMode === 'zero' ? 0 : Math.min(140, (supplies.hasArmor === false ? 0 : this.run.player.armor) + supplies.armor);
     const armorCondition = Math.max(0, Math.min(1, (supplies.armorDurabilityPercent ?? 100) / 100));
     this.run.player.armor = Math.round(maximumArmor * armorCondition);
@@ -1571,8 +1584,14 @@ export class CriticalExtractionGame {
     this.deployEndsAt = performance.now() / 1000 + 0.9;
     this.combatGraceEndsAt = performance.now() / 1000 + 8;
     this.callbacks.onDeploying(true);
-    this.controlsActive = false;
+    // 键盘移动不依赖鼠标锁定。进入部署画面后立即接收 WASD，点击画面时
+    // 再把普通指针升级为 Pointer Lock；触控板或 Safari 拒绝锁定也不影响移动。
+    this.controlsActive = true;
+    this.fallbackLookActive = true;
+    this.fallbackPointerX = window.innerWidth / 2;
+    this.fallbackPointerY = window.innerHeight / 2;
     this.callbacks.onControlCapture(false);
+    this.callbacks.onControlStatus('WASD 可直接移动 · 点击画面锁定鼠标转向');
     this.callbacks.onUpdate(this.run);
     this.callbacks.onMiniMap(this.createMiniMapView());
     this.emitAbilityView(performance.now() / 1000);
@@ -2097,7 +2116,7 @@ export class CriticalExtractionGame {
   };
 
   private readonly onPointerDown = (event: PointerEvent): void => {
-    if (!['active', 'extracting'].includes(this.run.phase)) return;
+    if (!['deploying', 'active', 'extracting'].includes(this.run.phase)) return;
     const target = event.target as Element | null;
     if (target?.closest('button, .inventory-panel, .corpse-loot-panel, .pause-screen, .result-screen, .stash-screen')) return;
     if (!this.controlsActive) {
@@ -6352,23 +6371,6 @@ export class CriticalExtractionGame {
       this.audio.pipeEcho(echoPosition);
       this.nextPipeEchoAt = now + 5 + Math.random() * 7;
     }
-    if (event.type === 'enemy-convoy') {
-      const reinforcements = this.spawnPowerOutageReinforcements();
-      this.callbacks.onToast(
-        reinforcements > 0
-          ? `敌方车队抵达 · ${reinforcements} 名增援正在向核心区推进`
-          : '敌方车队抵达 · 现有巡逻队开始收缩包围',
-        'danger',
-      );
-      for (const enemy of this.enemies.filter((entry) => entry.alive && entry.state !== 'engage')) {
-        const objective = new THREE.Vector3(this.activeOperation.objective.x, enemy.floorY, this.activeOperation.objective.z);
-        this.setEnemyState(enemy, 'investigate', objective);
-      }
-    }
-    if (event.type === 'gas-leak') {
-      this.nextGasDamageAt = this.run.elapsedSeconds + 1.2;
-      this.callbacks.onToast('毒气正在核心区域扩散 · 立即离开黄色高危范围', 'danger');
-    }
   }
 
   private createMiniMapView(): TacticalMapView {
@@ -7297,6 +7299,24 @@ export class CriticalExtractionGame {
       0,
       Math.sin(angle) * distance,
     ));
+  }
+
+  /** Turn an enemy toward a horizontal direction without changing its height. */
+  private faceEnemyDirection(enemy: EnemyRuntime, direction: THREE.Vector3): void {
+    if (direction.lengthSq() < 0.000001) return;
+    enemy.group.lookAt(this.enemyLookTargetScratch.copy(enemy.group.position).add(direction));
+  }
+
+  /** Pick a small acoustic profile for weapon sounds based on the current room. */
+  private acousticSpaceAt(position: THREE.Vector3): AcousticSpace {
+    if (position.y < -1.5) return 'underground';
+    const nearbyRoof = this.acousticRoofs.some((roof) => {
+      const bounds = new THREE.Box3().setFromObject(roof);
+      return position.x >= bounds.min.x && position.x <= bounds.max.x
+        && position.z >= bounds.min.z && position.z <= bounds.max.z
+        && position.y <= bounds.max.y + 1.8;
+    });
+    return nearbyRoof ? 'indoor' : 'outdoor';
   }
 
   private findFactionEnemyTarget(enemy: EnemyRuntime, maxDistance: number): EnemyRuntime | null {
