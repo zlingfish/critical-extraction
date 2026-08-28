@@ -1338,7 +1338,9 @@ export class CriticalExtractionGame {
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas;
     this.callbacks = callbacks;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: false });
+    // Safari 和临时公网转发环境可能无法稳定创建高性能抗锯齿上下文。
+    // 关闭抗锯齿并交给浏览器选择显卡，画面仍由后处理保持清晰，但不再轻易触发 WebGL 丢失。
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false });
     this.renderer.setPixelRatio(this.renderScale);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;

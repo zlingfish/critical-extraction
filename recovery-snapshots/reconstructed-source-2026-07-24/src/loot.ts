@@ -73,12 +73,19 @@ const VARIANTS = ['封存版', '军规版', '改装版'];
 /** 经济平衡：所有可搜刮目录物资价值统一提高 7 倍。 */
 export const LOOT_VALUE_MULTIPLIER = 7;
 
-function backpackShape(rarity: ItemRarity, kind: ItemKind, key: string): { slotWidth: number; slotHeight: number } {
-  // 高级电子设备和情报件做成大件，价值按占格数同步提升，避免“占两格却不值钱”。
-  if (rarity === 'red') return { slotWidth: 2, slotHeight: 2 };
-  if (rarity === 'gold') return { slotWidth: 2, slotHeight: 1 };
-  if (rarity === 'purple' && (kind === 'electronics' || kind === 'intel')) return { slotWidth: 1, slotHeight: 2 };
-  if (key.includes('injector') || key.includes('medkit')) return { slotWidth: 1, slotHeight: 2 };
+function backpackShape(_rarity: ItemRarity, _kind: ItemKind, key: string): { slotWidth: number; slotHeight: number } {
+  // 参考搜打撤常见设计：尺寸由物品体积决定，不按稀有度一刀切。
+  const footprints: Record<string, [number, number]> = {
+    'quantum-chip': [1, 1], 'black-ledger': [1, 2], 'central-key': [2, 1],
+    'prototype-core': [2, 2], 'regen-sample': [1, 2], 'command-seal': [1, 1],
+    'thermal-core': [1, 1], 'access-token': [1, 2], 'aerospace-alloy': [2, 1],
+    'reactor-key': [1, 1], 'surgical-system': [2, 2], 'black-box': [2, 1],
+    'night-optics': [1, 2], 'thermal-sensor': [1, 1], 'command-drive': [2, 1],
+    'crypto-key': [1, 1], 'prototype-valve': [2, 1], 'coagulant': [1, 2],
+    'adrenaline-injector': [1, 1], 'stamina-injector': [1, 1], 'medkit': [1, 2],
+  };
+  const footprint = footprints[key];
+  if (footprint) return { slotWidth: footprint[0], slotHeight: footprint[1] };
   return { slotWidth: 1, slotHeight: 1 };
 }
 
