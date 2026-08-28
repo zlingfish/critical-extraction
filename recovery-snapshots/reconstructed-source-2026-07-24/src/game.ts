@@ -1473,7 +1473,7 @@ export class CriticalExtractionGame {
     // Safari、内置浏览器和触控板环境可能拒绝锁鼠标，但 WASD 仍应立即可用；
     // 点击画面后再尝试锁定鼠标，失败时继续使用普通指针视角。
     this.controlsActive = true;
-    this.fallbackLookActive = true;
+    this.fallbackLookActive = false;
     this.fallbackPointerX = window.innerWidth / 2;
     this.fallbackPointerY = window.innerHeight / 2;
     this.callbacks.onControlCapture(false);
@@ -1587,7 +1587,7 @@ export class CriticalExtractionGame {
     // 键盘移动不依赖鼠标锁定。进入部署画面后立即接收 WASD，点击画面时
     // 再把普通指针升级为 Pointer Lock；触控板或 Safari 拒绝锁定也不影响移动。
     this.controlsActive = true;
-    this.fallbackLookActive = true;
+    this.fallbackLookActive = false;
     this.fallbackPointerX = window.innerWidth / 2;
     this.fallbackPointerY = window.innerHeight / 2;
     this.callbacks.onControlCapture(false);
@@ -1721,15 +1721,17 @@ export class CriticalExtractionGame {
 
   captureControls(): void {
     if (!['deploying', 'active', 'extracting'].includes(this.run.phase)) return;
-    if (document.pointerLockElement === this.canvas) return;
-    // 不再调用 Pointer Lock。浏览器会弹出“鼠标指针已隐藏”的系统提示，
-    // 也会影响截图和触控板操作；改用普通鼠标增量，准星仍固定在画面中央。
+    if (document.pointerLockElement === this.canvas) {
+      this.callbacks.onControlCapture(true);
+      return;
+    }
+    // 标准 FPS 控制：点击遮罩后立刻收起界面并请求锁定鼠标。
+    // 锁定成功后只读取 movementX/Y，不再混用屏幕坐标，避免视角抖动。
     this.controlsActive = true;
-    this.fallbackLookActive = true;
-    this.fallbackPointerX = window.innerWidth / 2;
-    this.fallbackPointerY = window.innerHeight / 2;
+    this.fallbackLookActive = false;
     this.callbacks.onControlCapture(true);
-    this.callbacks.onControlStatus('视角控制：移动鼠标转向 · Esc 退出');
+    this.callbacks.onControlStatus('视角控制：正在锁定鼠标…');
+    this.requestLookLock();
   }
 
   abortRun(): void {
@@ -2106,12 +2108,11 @@ export class CriticalExtractionGame {
     if (!this.controlsActive) return;
     const isPointerLocked = document.pointerLockElement === this.canvas;
     if (!isPointerLocked && !this.fallbackLookActive) return;
-    const dx = isPointerLocked ? event.movementX : event.clientX - this.fallbackPointerX;
-    const dy = isPointerLocked ? event.movementY : event.clientY - this.fallbackPointerY;
-    if (!isPointerLocked) {
-      this.fallbackPointerX = event.clientX;
-      this.fallbackPointerY = event.clientY;
-    }
+    // movementX/Y works for both Pointer Lock and the embedded-browser
+    // fallback. Never mix it with clientX/Y: the two coordinate systems can
+    // disagree on a trackpad and make the camera oscillate.
+    const dx = event.movementX;
+    const dy = event.movementY;
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     if (Math.abs(dx) + Math.abs(dy) === 0 || Math.abs(dx) + Math.abs(dy) > 240) return;
     const inputScale = Math.abs(dx) + Math.abs(dy) <= 12
@@ -2166,15 +2167,12 @@ export class CriticalExtractionGame {
 
   private readonly onPointerLockError = (): void => {
     this.pointerLockPending = false;
-    // Keep the run playable when Pointer Lock is unavailable (common in
-    // embedded previews and some trackpad/browser combinations). The game
-    // shell hides the cursor while this mode is active; client deltas drive
-    // the same camera look code as locked mouse movement.
+    // 内置浏览器可能不允许 Pointer Lock。此时保持遮罩关闭，并只读取
+    // movementX/Y；不要再退回 clientX/Y 屏幕坐标，避免触控板视角抖动。
     this.fallbackLookActive = true;
     this.controlsActive = true;
     this.callbacks.onControlCapture(true);
-    this.callbacks.onControlStatus('视角控制：触控板模式 · 移动鼠标转向 · Esc 退出');
-    this.callbacks.onToast('已切换触控板视角模式', 'info');
+    this.callbacks.onControlStatus('视角控制：移动鼠标转向 · Esc 退出');
   };
 
   private requestLookLock(): void {
@@ -5642,37 +5640,42 @@ export class CriticalExtractionGame {
       const uniform = new THREE.MeshStandardMaterial({ color: boss ? '#252929' : roleConfig.color, roughness: 0.86 });
       const vest = new THREE.MeshStandardMaterial({ color: '#252b26', roughness: 0.8 });
       const skin = new THREE.MeshStandardMaterial({ color: '#9c806d', roughness: 0.9 });
-      // 第三版士兵采用硬朗低多边形轮廓：宽肩、方形护甲和清楚的装备层次。
-      // 这套造型是原创战术兵，不复刻任何现成角色的脸或服装标志。
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.92, 0.38), uniform);
+      // 第三版士兵：身体和四肢使用圆角轮廓，外层护甲仍保持战术装备层次。
+      // 造型只参考“圆润、宽肩、重装”的感觉，不复刻现成角色标志。
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.29, 0.55, 6, 12), uniform);
+      body.scale.set(1.12, 1.06, 0.72);
       body.position.y = 1.1;
       body.castShadow = true;
-      const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.32, 0.36), uniform);
+      const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.15, 5, 10), uniform);
+      pelvis.scale.set(1.18, 0.82, 0.78);
       pelvis.position.set(0, 0.68, 0);
       pelvis.castShadow = true;
       const armor = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.58, 0.34), vest);
       armor.position.set(0, 1.2, 0.07);
       armor.castShadow = true;
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.38, 0.38), skin);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.225, 14, 10), skin);
       head.position.y = 1.82;
       head.castShadow = true;
       const helmet = new THREE.Mesh(
-        new THREE.BoxGeometry(elite ? 0.54 : 0.48, 0.2, elite ? 0.52 : 0.46),
+        new THREE.SphereGeometry(elite ? 0.31 : 0.285, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.6),
         new THREE.MeshStandardMaterial({ color: elite ? '#111716' : '#2a302b', roughness: 0.55, metalness: elite ? 0.48 : 0.22 }),
       );
-      helmet.position.set(0, 2.02, -0.01);
+      helmet.position.set(0, 1.99, -0.01);
+      helmet.scale.set(1.08, 0.72, 1.08);
       helmet.castShadow = true;
       const visor = new THREE.Mesh(
-        new THREE.BoxGeometry(0.3, 0.07, 0.035),
+        new THREE.SphereGeometry(0.145, 12, 6),
         new THREE.MeshBasicMaterial({ color: boss ? '#ffb129' : elite ? '#ff2f24' : '#a3c96c' }),
       );
       visor.position.set(0, 1.88, 0.205);
+      visor.scale.set(1.12, 0.27, 0.12);
       const faceMask = new THREE.Mesh(
-        new THREE.BoxGeometry(0.3, 0.17, 0.08),
+        new THREE.CylinderGeometry(0.13, 0.16, 0.12, 12),
         new THREE.MeshStandardMaterial({ color: '#1c2523', roughness: 0.6, metalness: 0.3 }),
       );
+      faceMask.rotation.x = Math.PI / 2;
       faceMask.position.set(0, 1.76, 0.19);
-      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.78, 0.21), uniform);
+      const leftArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.5, 5, 10), uniform);
       const rightArm = leftArm.clone();
       const leftElbow = new THREE.Group();
       const rightElbow = new THREE.Group();
@@ -5682,7 +5685,7 @@ export class CriticalExtractionGame {
       rightArm.position.set(0.46, 1.08, 0);
       leftArm.castShadow = true;
       rightArm.castShadow = true;
-      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.74, 0.25), uniform);
+      const leftLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.48, 5, 10), uniform);
       const rightLeg = leftLeg.clone();
       const leftKnee = new THREE.Group();
       const rightKnee = new THREE.Group();
@@ -5723,8 +5726,10 @@ export class CriticalExtractionGame {
       cape.position.set(0, 1.08, -0.34);
       cape.rotation.x = -0.08;
       cape.castShadow = true;
-      const kneeLeft = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.14, 0.07), hardArmor);
+      const kneeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 7), hardArmor);
       const kneeRight = kneeLeft.clone();
+      kneeLeft.scale.set(0.82, 0.58, 0.58);
+      kneeRight.scale.copy(kneeLeft.scale);
       kneeLeft.position.set(-0.19, 0.42, 0.13);
       kneeRight.position.set(0.19, 0.42, 0.13);
       leftBoot.position.set(-0.19, 0.08, 0.11);

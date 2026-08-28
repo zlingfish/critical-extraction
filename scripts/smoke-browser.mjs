@@ -94,7 +94,9 @@ const beforeInput = await command('Runtime.evaluate', { expression: `JSON.string
 await command('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }))` });
 await sleep(700);
 await command('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }))` });
-await command('Runtime.evaluate', { expression: `window.dispatchEvent(new MouseEvent('mousemove', { clientX: innerWidth / 2 + 90, clientY: innerHeight / 2 - 24, bubbles: true }))` });
+await command('Runtime.evaluate', { expression: `document.getElementById('capture-controls')?.click()` });
+await sleep(800);
+await command('Runtime.evaluate', { expression: `window.dispatchEvent(new MouseEvent('mousemove', { movementX: 90, movementY: -24, bubbles: true }))` });
 await sleep(120);
 const afterInput = await command('Runtime.evaluate', { expression: `JSON.stringify((() => {
   const game = window.__criticalExtraction.game;
@@ -108,6 +110,9 @@ const active = await command('Runtime.evaluate', { expression: `JSON.stringify({
   bosses: window.__criticalExtraction?.game?.enemies?.filter((enemy) => enemy.boss).length,
   enemies: window.__criticalExtraction?.game?.enemies?.length,
   missionTasks: [...document.querySelectorAll('#mission-tracker .mission-task b')].map((item) => item.textContent),
+  controlOverlayHidden: document.getElementById('capture-controls')?.hidden,
+  pointerLocked: document.pointerLockElement === document.querySelector('canvas'),
+  fallbackLookActive: window.__criticalExtraction?.game?.fallbackLookActive,
 })`, returnByValue: true });
 const screenshot = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
 const screenshotPath = '/tmp/critical-extraction-no-boss-smoke.png';
@@ -173,6 +178,8 @@ if (
   || result.initial.administrationRoute?.colliders !== 3
   || result.initial.administrationRouteBlocked
   || result.active.runtimeError
+  || !result.active.controlOverlayHidden
+  || (!result.active.pointerLocked && !result.active.fallbackLookActive)
   || Math.hypot(result.input.after.x - result.input.before.x, result.input.after.z - result.input.before.z) < 0.01
   || Math.abs(result.input.after.yaw - result.input.before.yaw) < 0.01
   || result.active.phase !== 'active'
