@@ -1722,9 +1722,14 @@ export class CriticalExtractionGame {
   captureControls(): void {
     if (!['deploying', 'active', 'extracting'].includes(this.run.phase)) return;
     if (document.pointerLockElement === this.canvas) return;
-    this.controlsActive = false;
-    this.callbacks.onControlStatus('视角控制：正在锁定鼠标…');
-    this.requestLookLock();
+    // 不再调用 Pointer Lock。浏览器会弹出“鼠标指针已隐藏”的系统提示，
+    // 也会影响截图和触控板操作；改用普通鼠标增量，准星仍固定在画面中央。
+    this.controlsActive = true;
+    this.fallbackLookActive = true;
+    this.fallbackPointerX = window.innerWidth / 2;
+    this.fallbackPointerY = window.innerHeight / 2;
+    this.callbacks.onControlCapture(true);
+    this.callbacks.onControlStatus('视角控制：移动鼠标转向 · Esc 退出');
   }
 
   abortRun(): void {
@@ -5637,30 +5642,42 @@ export class CriticalExtractionGame {
       const uniform = new THREE.MeshStandardMaterial({ color: boss ? '#252929' : roleConfig.color, roughness: 0.86 });
       const vest = new THREE.MeshStandardMaterial({ color: '#252b26', roughness: 0.8 });
       const skin = new THREE.MeshStandardMaterial({ color: '#9c806d', roughness: 0.9 });
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.95, 0.38), uniform);
+      // 第三版士兵：用胶囊和球体替代旧版方盒子，让轮廓更接近穿戴装备的真人。
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.58, 5, 10), uniform);
+      body.scale.set(1.08, 1.08, 0.72);
       body.position.y = 1.1;
       body.castShadow = true;
-      const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.34, 0.4), uniform);
+      const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.18, 4, 8), uniform);
+      pelvis.scale.set(1.12, 0.9, 0.8);
       pelvis.position.set(0, 0.68, 0);
       pelvis.castShadow = true;
-      const armor = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.32), vest);
+      const armor = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.54, 0.34), vest);
       armor.position.set(0, 1.2, 0.07);
+      armor.scale.set(1, 1, 0.92);
       armor.castShadow = true;
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skin);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.225, 12, 8), skin);
       head.position.y = 1.82;
       head.castShadow = true;
       const helmet = new THREE.Mesh(
-        new THREE.BoxGeometry(elite ? 0.56 : 0.48, 0.22, elite ? 0.58 : 0.48),
+        new THREE.SphereGeometry(elite ? 0.32 : 0.285, 12, 7, 0, Math.PI * 2, 0, Math.PI * 0.58),
         new THREE.MeshStandardMaterial({ color: elite ? '#111716' : '#2a302b', roughness: 0.55, metalness: elite ? 0.48 : 0.22 }),
       );
-      helmet.position.set(0, 2.04, 0);
+      helmet.position.set(0, 1.99, 0);
+      helmet.scale.set(1.08, 0.7, 1.08);
       helmet.castShadow = true;
       const visor = new THREE.Mesh(
-        new THREE.BoxGeometry(0.3, 0.08, 0.045),
+        new THREE.SphereGeometry(0.14, 10, 5, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.22),
         new THREE.MeshBasicMaterial({ color: boss ? '#ffb129' : elite ? '#ff2f24' : '#a3c96c' }),
       );
-      visor.position.set(0, 1.87, 0.225);
-      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.82, 0.2), uniform);
+      visor.position.set(0, 1.86, 0.205);
+      visor.scale.set(1.15, 0.42, 0.12);
+      const faceMask = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.13, 0.16, 0.13, 10),
+        new THREE.MeshStandardMaterial({ color: '#1c2523', roughness: 0.6, metalness: 0.3 }),
+      );
+      faceMask.rotation.x = Math.PI / 2;
+      faceMask.position.set(0, 1.77, 0.19);
+      const leftArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.53, 4, 8), uniform);
       const rightArm = leftArm.clone();
       const leftElbow = new THREE.Group();
       const rightElbow = new THREE.Group();
@@ -5670,7 +5687,7 @@ export class CriticalExtractionGame {
       rightArm.position.set(0.46, 1.08, 0);
       leftArm.castShadow = true;
       rightArm.castShadow = true;
-      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.78, 0.24), uniform);
+      const leftLeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.125, 0.52, 4, 8), uniform);
       const rightLeg = leftLeg.clone();
       const leftKnee = new THREE.Group();
       const rightKnee = new THREE.Group();
@@ -5686,6 +5703,32 @@ export class CriticalExtractionGame {
       leftLeg.castShadow = true;
       rightLeg.castShadow = true;
       const weapon = this.makeEnemyWeapon(weaponId, vest, elite);
+      const backpack = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.52, 0.18),
+        new THREE.MeshStandardMaterial({ color: '#1d2924', roughness: 0.92, metalness: 0.08 }),
+      );
+      backpack.position.set(0, 1.14, -0.22);
+      backpack.scale.set(elite ? 1.1 : 0.92, 1, 1);
+      backpack.castShadow = true;
+      const chestPlate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.27, 0.055),
+        new THREE.MeshStandardMaterial({ color: boss ? '#707b54' : '#465348', roughness: 0.7, metalness: 0.22 }),
+      );
+      chestPlate.position.set(0, 1.32, 0.25);
+      chestPlate.castShadow = true;
+      const pouchMaterial = new THREE.MeshStandardMaterial({ color: '#313d33', roughness: 0.88 });
+      const pouchLeft = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.1), pouchMaterial);
+      const pouchRight = pouchLeft.clone();
+      pouchLeft.position.set(-0.2, 1.12, 0.25);
+      pouchRight.position.set(0.2, 1.12, 0.25);
+      const kneeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), hardArmor);
+      const kneeRight = kneeLeft.clone();
+      kneeLeft.scale.set(0.85, 0.58, 0.72);
+      kneeRight.scale.copy(kneeLeft.scale);
+      kneeLeft.position.set(-0.19, 0.42, 0.13);
+      kneeRight.position.set(0.19, 0.42, 0.13);
+      leftBoot.position.set(-0.19, 0.08, 0.11);
+      rightBoot.position.set(0.19, 0.08, 0.11);
       const alertLight = new THREE.PointLight('#ff2e24', 0, 7, 2.2);
       alertLight.position.set(0, 2.1, 0.25);
       alertLight.visible = false;
@@ -5724,7 +5767,7 @@ export class CriticalExtractionGame {
         shield.castShadow = true;
         torso.add(shield);
       }
-      group.add(torso, headRig, body, armor, head, helmet, visor, leftArm, rightArm, leftLeg, rightLeg, weapon, alertLight, muzzleLight);
+      group.add(torso, headRig, body, pelvis, armor, head, helmet, visor, faceMask, leftArm, rightArm, leftLeg, rightLeg, leftBoot, rightBoot, kneeLeft, kneeRight, backpack, chestPlate, pouchLeft, pouchRight, weapon, alertLight, muzzleLight);
       group.position.set(x, 0, z);
       group.visible = !reinforcement;
       this.scene.add(group);

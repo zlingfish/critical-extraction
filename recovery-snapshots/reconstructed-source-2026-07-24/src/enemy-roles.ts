@@ -27,32 +27,32 @@ export interface EnemyRoleConfig {
 export const ENEMY_ROLE_CONFIGS: Readonly<Record<EnemyRoleId, EnemyRoleConfig>> = {
   standard: {
     id: 'standard', label: '普通步兵', health: 100, armor: 20, speed: 3.1, visionRange: 28,
-    weaponPreference: ['smg', 'shotgun'], preferredDistance: [8, 24], marker: 'dot', color: '#b8c2cc',
+    weaponPreference: ['smg', 'shotgun'], preferredDistance: [8, 24], marker: 'dot', color: '#596552',
     description: '装备均衡，负责守卫和巡逻。',
   },
   medic: {
     id: 'medic', label: '医疗兵', health: 88, armor: 16, speed: 3.2, visionRange: 31,
-    weaponPreference: ['smg'], preferredDistance: [7, 22], marker: 'medical', color: '#5ee7a3',
+    weaponPreference: ['smg'], preferredDistance: [7, 22], marker: 'medical', color: '#4d7865',
     description: '优先救治受伤队友，避免独自冲锋。',
   },
   shield: {
     id: 'shield', label: '盾牌兵', health: 150, armor: 55, speed: 2.25, visionRange: 25,
-    weaponPreference: ['shotgun'], preferredDistance: [4, 16], marker: 'shield', color: '#62a8ff',
+    weaponPreference: ['shotgun'], preferredDistance: [4, 16], marker: 'shield', color: '#42627a',
     description: '正面持盾推进，绕到侧后方更容易击破。',
   },
   sniper: {
     id: 'sniper', label: '狙击手', health: 82, armor: 12, speed: 2.55, visionRange: 68,
-    weaponPreference: ['sniper'], preferredDistance: [27, 58], marker: 'scope', color: '#d9a7ff',
+    weaponPreference: ['sniper'], preferredDistance: [27, 58], marker: 'scope', color: '#4c5d4e',
     description: '保持远距离，发现目标后优先寻找高处和掩体。',
   },
   assault: {
     id: 'assault', label: '冲锋兵', health: 112, armor: 24, speed: 4.35, visionRange: 27,
-    weaponPreference: ['smg', 'shotgun'], preferredDistance: [3, 14], marker: 'chevron', color: '#ff9a62',
+    weaponPreference: ['smg', 'shotgun'], preferredDistance: [3, 14], marker: 'chevron', color: '#7e6047',
     description: '擅长近距离压迫，会主动缩短与目标的距离。',
   },
   captain: {
     id: 'captain', label: '队长', health: 178, armor: 42, speed: 3.2, visionRange: 42,
-    weaponPreference: ['smg'], preferredDistance: [10, 30], marker: 'star', color: '#ffcf5a',
+    weaponPreference: ['smg'], preferredDistance: [10, 30], marker: 'star', color: '#8a6b2d',
     description: '带队作战，满足条件时会呼叫支援。',
   },
 };
